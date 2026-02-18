@@ -132,6 +132,38 @@ The transformed data is passed to **Client Components**. **Framer Motion** orche
 
 ---
 
+## 🎨 Design & UI Engineering
+
+This project isn't just functional; it's designed to feel **alive**. Here are the specialized tools used to craft the experience:
+
+### **1. Tailwind CSS v4** (`@theme`)
+We use the latest **alpha** engine of Tailwind for zero-runtime CSS.
+- **Why:** It allows us to define semantic tokens like `--color-void` and `--color-primary` directly in CSS variables, making the dark mode consistent and easy to maintain.
+- **Role:** Handles 100% of the layout, typography, and "glassmorphism" effects (using `backdrop-blur-xl` and `bg-white/5`).
+
+### **2. Framer Motion** (`<motion.div>`)
+The animation engine that powers the "cinematic" feel.
+- **Why:** CSS transitions aren't enough for complex orchestrated sequences.
+- **Role:**
+    - **Staggered Entry:** The bento grid cards load one by one (`staggerChildren: 0.08`).
+    - **Velocity Gauge:** The radial dial animates from 0 to your score with a spring physics curve.
+    - **Hero Text:** The "GitMetrix" title splits into characters that float up with a blur effect.
+
+### **3. Recharts** (`<ResponsiveContainer>`)
+The visualization library built on D3.js but optimized for React.
+- **Why:** Most chart libraries are ugly by default. Recharts gives us full SVG control.
+- **Role:**
+    - **Gradient Areas:** usage of `<linearGradient>` to fade the chart fill into transparency.
+    - **Custom Tooltips:** We entirely replaced the default tooltips with our own "Obsidian" styled React components.
+    - **Glowing Dots:** We injected custom SVG filters to make the active data points "glow" when hovered.
+
+### **4. Lucide React** (`<Icons>`)
+A consistent, pixel-perfect icon set.
+- **Why:** Consistency in stroke width (2px) and rounded corners.
+- **Role:** Every icon (Zap, Flame, GitCommit) acts as a visual anchor for the data metrics.
+
+---
+
 <div align="center">
-  <p>Built with ❤️ for developers.</p>
+  <p>Built with ❤️</p>
 </div>
