@@ -71,6 +71,67 @@ UPSTASH_REDIS_REST_TOKEN=...
 
 ---
 
+## 📂 Project Structure
+
+A highly modular architecture designed for scalability and separation of concerns.
+
+```
+GitMetrix/
+├── public/                 # Static assets (favicons, images)
+├── src/
+│   ├── app/                # Next.js 16 App Router
+│   │   ├── dashboard/      # Protected dashboard route (Server Component)
+│   │   ├── sign-in/        # Clerk sign-in page
+│   │   ├── sign-up/        # Clerk sign-up page
+│   │   ├── globals.css     # Tailwind v4 theme & base styles
+│   │   ├── layout.tsx      # Root layout (ClerkProvider, Font setup)
+│   │   └── page.tsx        # Landing Page (Client Component)
+│   │
+│   ├── components/         # React Components
+│   │   ├── ui/             # Reusable UI primitives (Cards, Charts, Skeletons)
+│   │   ├── animated-bg.tsx # Background animation engine
+│   │   ├── dashboard-*.tsx # Bounded Context components (Header, Content)
+│   │   └── username-search # Smart search bar with debounce & variants
+│   │
+│   ├── lib/                # Core Business Logic
+│   │   ├── github.ts       # GitHub GraphQL Client & Data Transformation
+│   │   ├── redis.ts        # Upstash Redis Client Singleton
+│   │   ├── types.ts        # TypeScript Interfaces & Zod Schemas
+│   │   └── utils.ts        # Tailwind Class Merger (cn)
+│   │
+│   └── middleware.ts       # Edge Middleware for Route Protection
+├── .env.local              # Environment Secrets
+├── next.config.ts          # Application Configuration
+└── tailwind.config.ts      # Design System Tokens
+```
+
+---
+
+## 🔄 How It Works
+
+**1. Authentication & Entry**
+Users sign in via **Clerk** (managed OAuth). If they lack a GitHub account, the **Middleware** redirects them. Alternatively, anyone can use the **Search Bar** to instantly audit *any* public GitHub profile without signing in, transforming the app into a public utility.
+
+**2. Data Injection (Server-Side)**
+The dashboard page (`src/app/dashboard/page.tsx`) acts as the data controller. It resolves the target username using a priority chain:
+> `?username=URL_Param`  ➔  `GitHub OAuth Account`  ➔  `Clerk Username`
+
+**3. The Edge Caching Layer**
+Before hitting GitHub, the app checks **Upstash Redis**.
+- **Cache Hit ( < 50ms ):** Returns pre-computed stats instantly.
+- **Cache Miss:** Executes a single, optimized **GraphQL Query** to GitHub.
+
+**4. Data Transformation Engine**
+Raw GraphQL data is processed in `src/lib/github.ts`:
+- **Commit History:** Aggregated into a 30-day time series.
+- **Velocity Score:** Calculated using a weighted algorithm (Commits × 0.6 + PRs × 1.5).
+- **Language DNA:** Byte-size analysis across all repositories.
+
+**5. Visual Rendering**
+The transformed data is passed to **Client Components**. **Framer Motion** orchestrates a staggered entrance for the bento grid, while **Recharts** renders the interactive data visualizations with a custom obsidian theme.
+
+---
+
 <div align="center">
   <p>Built with ❤️ for developers.</p>
 </div>
