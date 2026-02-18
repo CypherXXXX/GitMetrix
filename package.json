@@ -1,5 +1,5 @@
 {
-  "name": "tmp-init",
+  "name": "gitmetrix",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -9,9 +9,18 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@clerk/nextjs": "^6.37.5",
+    "@clerk/themes": "^2.4.53",
+    "@upstash/redis": "^1.36.2",
+    "clsx": "^2.1.1",
+    "framer-motion": "^12.34.1",
+    "lucide-react": "^0.574.0",
     "next": "16.1.6",
+    "octokit": "^5.0.5",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "recharts": "^3.7.0",
+    "tailwind-merge": "^3.4.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
