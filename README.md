@@ -18,11 +18,6 @@
 
   <br />
 
-  <p align="center">
-    <a href="#features">Features</a> •
-    <a href="#getting-started">Get Started</a> •
-    <a href="#environment-variables">Env Setup</a>
-  </p>
 </div>
 
 <br />
