@@ -7,6 +7,7 @@ import {
     XAxis,
     YAxis,
     Tooltip,
+    CartesianGrid,
     PieChart,
     Pie,
     Cell,
@@ -38,6 +39,11 @@ export function ActivityChart({ data }: ActivityChartProps) {
                             <stop offset="100%" stopColor="#A855F7" />
                         </linearGradient>
                     </defs>
+                    <CartesianGrid
+                        strokeDasharray="3 3"
+                        stroke="#1a1a1e"
+                        vertical={false}
+                    />
                     <XAxis
                         dataKey="date"
                         tick={{ fill: "#52525b", fontSize: 10, fontFamily: "Inter" }}
@@ -63,6 +69,7 @@ export function ActivityChart({ data }: ActivityChartProps) {
                             boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
                         }}
                         labelFormatter={(label) => `${String(label)}`}
+                        cursor={{ stroke: "#6366F1", strokeWidth: 1, strokeDasharray: "4 4" }}
                     />
                     <Area
                         type="monotone"
@@ -72,10 +79,11 @@ export function ActivityChart({ data }: ActivityChartProps) {
                         fill="url(#activityGradient)"
                         dot={false}
                         activeDot={{
-                            r: 4,
+                            r: 5,
                             fill: "#A855F7",
-                            stroke: "#0F0F0F",
+                            stroke: "#6366F1",
                             strokeWidth: 2,
+                            filter: "drop-shadow(0 0 6px rgba(168, 85, 247, 0.6))",
                         }}
                     />
                 </AreaChart>
@@ -86,6 +94,50 @@ export function ActivityChart({ data }: ActivityChartProps) {
 
 interface LanguagePieChartProps {
     languages: LanguageBreakdown[];
+}
+
+function formatBytes(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / 1048576).toFixed(1)} MB`;
+}
+
+function PieTooltipContent({ active, payload }: { active?: boolean; payload?: Array<{ payload: LanguageBreakdown }> }) {
+    if (!active || !payload || payload.length === 0) return null;
+    const data = payload[0].payload;
+    return (
+        <div
+            style={{
+                backgroundColor: "#0F0F0F",
+                border: "1px solid #27272A",
+                borderRadius: "12px",
+                padding: "10px 14px",
+                boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+            }}
+        >
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
+                <div
+                    style={{
+                        width: "8px",
+                        height: "8px",
+                        borderRadius: "50%",
+                        backgroundColor: data.color || "#6366F1",
+                    }}
+                />
+                <span style={{ color: "#fff", fontSize: "12px", fontFamily: "Inter", fontWeight: 500 }}>
+                    {data.name}
+                </span>
+            </div>
+            <div style={{ display: "flex", gap: "12px", marginTop: "2px" }}>
+                <span style={{ color: "#a1a1aa", fontSize: "11px", fontFamily: "JetBrains Mono, monospace" }}>
+                    {data.percentage}%
+                </span>
+                <span style={{ color: "#52525b", fontSize: "11px", fontFamily: "JetBrains Mono, monospace" }}>
+                    {formatBytes(data.value)}
+                </span>
+            </div>
+        </div>
+    );
 }
 
 export function LanguagePieChart({ languages }: LanguagePieChartProps) {
@@ -111,6 +163,7 @@ export function LanguagePieChart({ languages }: LanguagePieChartProps) {
                                 />
                             ))}
                         </Pie>
+                        <Tooltip content={<PieTooltipContent />} />
                     </PieChart>
                 </ResponsiveContainer>
             </div>

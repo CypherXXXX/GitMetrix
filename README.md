@@ -33,10 +33,11 @@ The application uses **Clerk** for GitHub OAuth authentication, **Upstash Redis*
 | **Velocity Score** | A weighted composite metric (commits × 0.6 + PRs × 1.5) capped at 100, rendered as an animated radial gauge |
 | **Active Streak** | Consecutive days with at least one contribution, calculated by walking the contribution calendar backwards |
 | **Contribution Totals** | Year-to-date counts for commits, merged pull requests, and issues opened |
-| **Activity Chart** | 30-day area chart of daily contributions powered by Recharts |
-| **Language Breakdown** | Donut chart showing the top 6 languages weighted by byte-size across your owned repositories |
+| **Activity Chart** | 30-day area chart with gradient fill, dashed grid, glowing active dots, and custom dark tooltip |
+| **Language Breakdown** | Donut chart with interactive tooltip showing language name, percentage, and byte-size |
 | **Top Repositories** | Sorted by stargazer count with language, stars, and fork indicators |
-| **GitHub-Only Auth** | One-click sign-in via GitHub OAuth through Clerk — no passwords, no forms |
+| **Username Search** | Search any GitHub username from the header or fallback prompt — demo any developer's stats instantly |
+| **GitHub OAuth** | One-click sign-in via GitHub OAuth through Clerk with automatic username detection |
 | **Edge Caching** | Dashboard data is cached for 1 hour in Upstash Redis to minimize GitHub API calls |
 | **Animated Landing** | Per-character title animation, staggered fade-ins, light beams, and gradient glow effects |
 | **Responsive Design** | Fully responsive bento grid layout adapting from 1 column on mobile to 4 columns on desktop |
@@ -95,7 +96,7 @@ Browser ──▶ Clerk Auth ──▶ Next.js App Router
 **Data Flow:**
 
 1. User signs in with GitHub via Clerk
-2. The dashboard server component extracts the GitHub username from Clerk's `externalAccounts`
+2. The dashboard server component resolves the username via priority chain: `?username=` query param → GitHub OAuth → Clerk username → search bar prompt
 3. `fetchGitHubData()` checks Upstash Redis for a cached result (TTL: 1 hour)
 4. On cache miss, a single GraphQL query fetches contributions, repositories, and languages
 5. Raw data is transformed into velocity score, streak count, language breakdown, and activity timeline
@@ -191,7 +192,8 @@ GitMetrix/
 │   │   │   └── skeleton.tsx                # Loading skeleton & DashboardSkeleton grid
 │   │   ├── animated-background.tsx         # Full-screen animated grid with light beams
 │   │   ├── dashboard-content.tsx           # Bento grid layout with all dashboard cards
-│   │   └── dashboard-header.tsx            # Sticky header with branding & UserButton
+│   │   ├── dashboard-header.tsx            # Sticky header with branding, search & UserButton
+│   │   └── username-search.tsx             # GitHub username search (full & compact variants)
 │   │
 │   ├── lib/
 │   │   ├── github.ts                       # GitHub GraphQL query, data transformation, caching

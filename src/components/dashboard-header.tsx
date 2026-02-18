@@ -4,6 +4,7 @@ import Link from "next/link";
 import { UserButton } from "@clerk/nextjs";
 import { motion } from "framer-motion";
 import { Zap } from "lucide-react";
+import { UsernameSearch } from "@/components/username-search";
 
 interface DashboardHeaderProps {
     name: string;
@@ -23,11 +24,14 @@ export function DashboardHeader({ name, username }: DashboardHeaderProps) {
                 </Link>
 
                 <div className="flex items-center gap-4">
+                    <div className="hidden sm:block">
+                        <UsernameSearch compact />
+                    </div>
                     <motion.div
                         initial={{ opacity: 0, x: 10 }}
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ delay: 0.3 }}
-                        className="hidden items-center gap-2 sm:flex"
+                        className="hidden items-center gap-2 md:flex"
                     >
                         <span className="text-sm text-zinc-400">{name}</span>
                         {username && (
