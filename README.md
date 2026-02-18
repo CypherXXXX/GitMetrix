@@ -1,27 +1,28 @@
 <div align="center">
   <br />
-  <a href="https://git-metrix.vercel.app">
-    <img src="public/logo.png" alt="GitMetrix Logo" width="100" height="auto" />
-  </a>
-  <br />
-
-  # ⚡ GitMetrix
-
-  **The Developer Velocity Dashboard**
-
-  <p align="center">
-    <a href="#features">Features</a> •
-    <a href="#tech-stack">Stack</a> •
-    <a href="#getting-started">Get Started</a> •
-    <a href="#environment-variables">Env Setup</a>
-  </p>
+  <h1>⚡ GitMetrix</h1>
+  <h3>The Developer Velocity Dashboard</h3>
 
   <p align="center">
     Transform your GitHub activity into a stunning, real-time visualization. <br />
     Track streaks, analyze languages, and measure your impact with the <strong>Velocity Score</strong>.
   </p>
 
-  ![GitMetrix Dashboard Preview](https://github.com/user-attachments/assets/placeholder-image-link)
+  <div align="center">
+    <img src="https://img.shields.io/badge/Next.js_16-000000?style=for-the-badge&logo=nextdotjs&logoColor=white" alt="Next.js" />
+    <img src="https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript" />
+    <img src="https://img.shields.io/badge/Tailwind_v4-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white" alt="Tailwind CSS" />
+    <img src="https://img.shields.io/badge/Clerk_Auth-6C47FF?style=for-the-badge&logo=clerk&logoColor=white" alt="Clerk" />
+    <img src="https://img.shields.io/badge/Upstash_Redis-00E9A3?style=for-the-badge&logo=redis&logoColor=black" alt="Upstash" />
+  </div>
+
+  <br />
+
+  <p align="center">
+    <a href="#features">Features</a> •
+    <a href="#getting-started">Get Started</a> •
+    <a href="#environment-variables">Env Setup</a>
+  </p>
 </div>
 
 <br />
@@ -35,21 +36,6 @@
 - **🔎 Universal Search** — Analyze *any* developer on GitHub instantly (e.g., `torvalds`, `shadcn`).
 - **🎨 Obsidian UI** — A premium, high-contrast dark theme designed for focus and aesthetics.
 - **🚀 Edge Performance** — Server-side rendering with Upstash Redis caching for instant loads.
-
----
-
-## 🛠 Tech Stack
-
-Built with the "bleeding edge" to ensure maximum performance and type safety.
-
-| Layer | Technology |
-|---|---|
-| **Core** | [Next.js 16](https://nextjs.org/) (App Router & Turbopack) |
-| **Language** | [TypeScript](https://www.typescriptlang.org/) (Strict Mode) |
-| **Styling** | [Tailwind CSS v4](https://tailwindcss.com/) + [Framer Motion](https://www.framer.com/motion/) |
-| **Data** | [GitHub GraphQL API](https://docs.github.com/en/graphql) |
-| **Cache** | [Upstash Redis](https://upstash.com/) (Serverless) |
-| **Auth** | [Clerk](https://clerk.com/) (OAuth) |
 
 ---
 
