@@ -24,13 +24,13 @@ export function Card({
             }}
             transition={{ duration: 0.3 }}
             className={cn(
-                "group relative overflow-hidden rounded-2xl border border-[#27272A] bg-[#0F0F0F]/80 p-6",
+                "group relative overflow-hidden rounded-2xl border border-border bg-surface/80 p-6",
                 "backdrop-blur-xl transition-colors duration-300",
                 className
             )}
             {...props}
         >
-            <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-indigo-500/5 to-purple-500/5 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+            <div className="absolute inset-0 rounded-2xl bg-linear-to-br from-indigo-500/5 to-purple-500/5 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
             <div className="relative z-10">{children}</div>
         </motion.div>
     );

@@ -3,7 +3,7 @@
 import { motion } from "framer-motion";
 import { SignInButton, SignedIn, SignedOut } from "@clerk/nextjs";
 import { AnimatedBackground } from "@/components/animated-background";
-import { ArrowRight, Activity, Zap, Shield } from "lucide-react";
+import { ArrowRight, Activity, Zap, Shield, MessageSquareCode } from "lucide-react";
 import Link from "next/link";
 
 const title = "GitMetrix";
@@ -41,9 +41,9 @@ export default function LandingPage() {
           variants={fadeUp(0.2)}
           initial="hidden"
           animate="visible"
-          className="rounded-full border border-[#27272A] bg-[#0F0F0F]/60 px-5 py-2 backdrop-blur-xl"
+          className="rounded-full border border-border bg-surface/60 px-4 py-1.5 backdrop-blur-xl sm:px-5 sm:py-2"
         >
-          <span className="bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-xs font-semibold tracking-widest text-transparent uppercase">
+          <span className="bg-linear-to-r from-indigo-400 to-purple-400 bg-clip-text text-[10px] font-semibold tracking-widest text-transparent uppercase sm:text-xs">
             Developer Velocity Dashboard
           </span>
         </motion.div>
@@ -56,7 +56,7 @@ export default function LandingPage() {
               variants={letterVariants}
               initial="hidden"
               animate="visible"
-              className="text-gradient-white text-6xl font-black tracking-tighter sm:text-8xl md:text-9xl"
+              className="text-gradient-white text-4xl font-black tracking-tighter sm:text-6xl md:text-8xl lg:text-9xl"
             >
               {letter}
             </motion.span>
@@ -80,21 +80,29 @@ export default function LandingPage() {
         >
           <SignedOut>
             <SignInButton mode="modal">
-              <button className="group relative flex cursor-pointer items-center gap-3 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 px-8 py-4 text-sm font-semibold text-white shadow-lg shadow-indigo-500/25 transition-all duration-300 hover:scale-105 hover:shadow-xl hover:shadow-indigo-500/40 active:scale-95">
+              <button className="group relative flex cursor-pointer items-center gap-3 rounded-full bg-linear-to-r from-indigo-500 to-purple-600 px-8 py-4 text-sm font-semibold text-white shadow-lg shadow-indigo-500/25 transition-all duration-300 hover:scale-105 hover:shadow-xl hover:shadow-indigo-500/40 active:scale-95">
                 <span>Analyze My GitHub</span>
                 <ArrowRight className="h-4 w-4 transition-transform duration-300 group-hover:translate-x-1" />
-                <div className="absolute inset-0 rounded-full bg-gradient-to-r from-indigo-400 to-purple-500 opacity-0 blur-xl transition-opacity duration-300 group-hover:opacity-50" />
+                <div className="absolute inset-0 rounded-full bg-linear-to-r from-indigo-400 to-purple-500 opacity-0 blur-xl transition-opacity duration-300 group-hover:opacity-50" />
               </button>
             </SignInButton>
           </SignedOut>
           <SignedIn>
-            <Link href="/dashboard">
-              <button className="group relative flex cursor-pointer items-center gap-3 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 px-8 py-4 text-sm font-semibold text-white shadow-lg shadow-indigo-500/25 transition-all duration-300 hover:scale-105 hover:shadow-xl hover:shadow-indigo-500/40 active:scale-95">
-                <span>Go to Dashboard</span>
-                <ArrowRight className="h-4 w-4 transition-transform duration-300 group-hover:translate-x-1" />
-                <div className="absolute inset-0 rounded-full bg-gradient-to-r from-indigo-400 to-purple-500 opacity-0 blur-xl transition-opacity duration-300 group-hover:opacity-50" />
-              </button>
-            </Link>
+            <div className="flex flex-col items-center gap-3 sm:flex-row">
+              <Link href="/dashboard">
+                <button className="group relative flex cursor-pointer items-center gap-3 rounded-full bg-linear-to-r from-indigo-500 to-purple-600 px-8 py-4 text-sm font-semibold text-white shadow-lg shadow-indigo-500/25 transition-all duration-300 hover:scale-105 hover:shadow-xl hover:shadow-indigo-500/40 active:scale-95">
+                  <span>Go to Dashboard</span>
+                  <ArrowRight className="h-4 w-4 transition-transform duration-300 group-hover:translate-x-1" />
+                  <div className="absolute inset-0 rounded-full bg-linear-to-r from-indigo-400 to-purple-500 opacity-0 blur-xl transition-opacity duration-300 group-hover:opacity-50" />
+                </button>
+              </Link>
+              <Link href="/chat">
+                <button className="group flex cursor-pointer items-center gap-2.5 rounded-full border border-border bg-surface/60 px-7 py-4 text-sm font-medium text-zinc-300 backdrop-blur-xl transition-all duration-300 hover:scale-105 hover:border-indigo-500/30 hover:text-white active:scale-95">
+                  <MessageSquareCode className="h-4 w-4 text-indigo-400" />
+                  <span>Chat with Code</span>
+                </button>
+              </Link>
+            </div>
           </SignedIn>
         </motion.div>
 

@@ -36,7 +36,7 @@ export function UsernameSearch({
                         value={username}
                         onChange={(e) => setUsername(e.target.value)}
                         placeholder="Search user..."
-                        className="h-8 w-40 rounded-lg border border-[#27272A] bg-[#0F0F0F] pl-9 pr-3 text-xs text-white placeholder-zinc-600 outline-none transition-all duration-300 focus:w-56 focus:border-indigo-500/50 focus:ring-1 focus:ring-indigo-500/20"
+                        className="h-8 w-40 rounded-lg border border-border bg-surface pl-9 pr-3 text-xs text-white placeholder-zinc-600 outline-none transition-all duration-300 focus:w-56 focus:border-indigo-500/50 focus:ring-1 focus:ring-indigo-500/20"
                     />
                 </div>
                 {isLoading && (
@@ -61,13 +61,13 @@ export function UsernameSearch({
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
                     placeholder={placeholder}
-                    className="h-14 w-full rounded-2xl border border-[#27272A] bg-[#0F0F0F]/80 pl-12 pr-14 text-sm text-white placeholder-zinc-600 backdrop-blur-xl outline-none transition-all duration-300 focus:border-indigo-500/50 focus:ring-2 focus:ring-indigo-500/20"
+                    className="h-14 w-full rounded-2xl border border-border bg-surface/80 pl-12 pr-14 text-sm text-white placeholder-zinc-600 backdrop-blur-xl outline-none transition-all duration-300 focus:border-indigo-500/50 focus:ring-2 focus:ring-indigo-500/20"
                     autoFocus
                 />
                 <button
                     type="submit"
                     disabled={!username.trim() || isLoading}
-                    className="absolute right-2 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 text-white transition-all duration-300 hover:scale-105 hover:shadow-lg hover:shadow-indigo-500/25 disabled:opacity-30 disabled:hover:scale-100"
+                    className="absolute right-2 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-xl bg-linear-to-r from-indigo-500 to-purple-600 text-white transition-all duration-300 hover:scale-105 hover:shadow-lg hover:shadow-indigo-500/25 disabled:opacity-30 disabled:hover:scale-100"
                 >
                     {isLoading ? (
                         <Loader2 className="h-4 w-4 animate-spin" />

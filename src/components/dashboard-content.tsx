@@ -154,7 +154,7 @@ function TotalOutput({
                 <TrendingUp className="h-4 w-4 text-purple-400" />
                 <span className="text-sm font-medium text-zinc-400">Total Output</span>
             </div>
-            <span className="font-mono text-5xl font-bold text-gradient-primary">
+            <span className="font-mono text-3xl font-bold text-gradient-primary sm:text-5xl">
                 {total.toLocaleString()}
             </span>
             <p className="mb-5 mt-1 text-sm text-zinc-500">
@@ -164,7 +164,7 @@ function TotalOutput({
                 {stats.map((stat) => (
                     <div
                         key={stat.label}
-                        className="rounded-xl border border-[#27272A] bg-[#050505] p-3 text-center"
+                        className="rounded-xl border border-border bg-void p-3 text-center"
                     >
                         <stat.icon className={`mx-auto mb-1.5 h-3.5 w-3.5 ${stat.color}`} />
                         <div className="font-mono text-lg font-semibold text-white">
@@ -223,19 +223,19 @@ function TopReposCard({ repos }: { repos: DashboardData["topRepos"] }) {
                 {repos.slice(0, 6).map((repo) => (
                     <div
                         key={repo.name}
-                        className="flex items-center justify-between rounded-xl border border-[#27272A] bg-[#050505] px-4 py-3 transition-colors hover:border-indigo-500/20"
+                        className="flex items-center justify-between rounded-xl border border-border bg-void px-3 py-2.5 transition-colors hover:border-indigo-500/20 sm:px-4 sm:py-3"
                     >
                         <div className="flex items-center gap-3">
                             <div
                                 className="h-2.5 w-2.5 rounded-full"
                                 style={{ backgroundColor: repo.languageColor }}
                             />
-                            <span className="text-sm font-medium text-white">
+                            <span className="max-w-[120px] truncate text-[13px] font-medium text-white sm:max-w-none sm:text-sm">
                                 {repo.name}
                             </span>
-                            <span className="text-xs text-zinc-500">{repo.language}</span>
+                            <span className="hidden text-xs text-zinc-500 sm:inline">{repo.language}</span>
                         </div>
-                        <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-3 sm:gap-4">
                             <div className="flex items-center gap-1.5">
                                 <Star className="h-3.5 w-3.5 text-yellow-500/70" />
                                 <span className="font-mono text-xs text-zinc-400">
@@ -263,7 +263,7 @@ interface DashboardContentProps {
 export function DashboardContent({ data }: DashboardContentProps) {
     return (
         <motion.div
-            className="grid grid-cols-1 gap-4 md:grid-cols-4 md:gap-6"
+            className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-4 md:gap-6"
             variants={containerVariants}
             initial="hidden"
             animate="visible"

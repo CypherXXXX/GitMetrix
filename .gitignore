@@ -42,3 +42,8 @@ next-env.d.ts
 # IDE
 .vscode/
 .idea/
+
+# AI tooling
+.gemini/
+.agent/
+.agents/

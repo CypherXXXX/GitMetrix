@@ -80,3 +80,46 @@ export interface DashboardData {
     totalRepos: number;
     topRepos: TopRepo[];
 }
+
+export interface Repository {
+    id: string;
+    owner: string;
+    name: string;
+    full_name: string;
+    status: "pending" | "indexing" | "completed" | "failed";
+    file_count: number;
+    error_message: string | null;
+    indexed_at: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface RepositoryFile {
+    id: string;
+    repository_id: string;
+    file_path: string;
+    content: string;
+    chunk_index: number;
+    embedding: number[] | null;
+    created_at: string;
+}
+
+export interface ChatMessage {
+    role: "user" | "assistant";
+    content: string;
+    fileReferences?: FileReference[];
+}
+
+export interface FileReference {
+    filePath: string;
+    chunkContent: string;
+    similarityScore: number;
+}
+
+export interface IndexingStatus {
+    status: Repository["status"];
+    progress: number;
+    fileCount: number;
+    error: string | null;
+    repositoryId: string;
+}

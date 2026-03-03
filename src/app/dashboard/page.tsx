@@ -4,6 +4,7 @@ import { fetchGitHubData } from "@/lib/github";
 import { DashboardHeader } from "@/components/dashboard-header";
 import { DashboardContent } from "@/components/dashboard-content";
 import { UsernameSearch } from "@/components/username-search";
+import { AnimatedBackground } from "@/components/animated-background";
 import { AlertTriangle, Github, Search } from "lucide-react";
 import { Suspense } from "react";
 import { DashboardSkeleton } from "@/components/ui/skeleton";
@@ -11,7 +12,7 @@ import { DashboardSkeleton } from "@/components/ui/skeleton";
 function UsernamePrompt() {
     return (
         <div className="flex h-[60vh] flex-col items-center justify-center gap-6">
-            <div className="rounded-full border border-[#27272A] bg-[#0F0F0F] p-5">
+            <div className="rounded-full border border-border bg-surface p-5">
                 <Search className="h-10 w-10 text-indigo-400" />
             </div>
             <div className="text-center">
@@ -81,11 +82,12 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     if (!activeUsername) {
         return (
             <div className="min-h-screen bg-void">
+                <AnimatedBackground />
                 <DashboardHeader
                     name={user.firstName || "User"}
                     avatarUrl={user.imageUrl}
                 />
-                <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
+                <main className="relative z-10 mx-auto max-w-7xl px-4 py-8 sm:px-6">
                     <UsernamePrompt />
                 </main>
             </div>
@@ -96,12 +98,13 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
 
     return (
         <div className="min-h-screen bg-void">
+            <AnimatedBackground />
             <DashboardHeader
                 name={isViewingOther ? activeUsername : (user.firstName || activeUsername)}
                 avatarUrl={user.imageUrl}
                 username={activeUsername}
             />
-            <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
+            <main className="relative z-10 mx-auto max-w-7xl px-4 py-8 sm:px-6">
                 <Suspense fallback={<DashboardSkeleton />}>
                     <DashboardData username={activeUsername} />
                 </Suspense>

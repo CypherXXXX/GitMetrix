@@ -4,10 +4,10 @@ import { dark } from "@clerk/themes";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "GitMetrix — Developer Velocity Dashboard",
+  title: "GitMetrix — Developer Velocity & AI Code Analysis",
   description:
-    "Visualize your GitHub activity with real-time velocity scoring, contribution analytics, and language breakdowns.",
-  keywords: ["GitHub", "developer", "analytics", "velocity", "dashboard"],
+    "Visualize your GitHub activity with real-time velocity scoring, contribution analytics, and chat with any codebase using AI-powered RAG analysis.",
+  keywords: ["GitHub", "developer", "analytics", "velocity", "dashboard", "AI", "code analysis", "RAG"],
 };
 
 export default function RootLayout({

@@ -10,7 +10,7 @@ export function Skeleton({ className }: SkeletonProps) {
     return (
         <div
             className={cn(
-                "animate-pulse rounded-2xl border border-[#27272A] bg-[#0F0F0F]",
+                "animate-pulse rounded-2xl border border-border bg-surface",
                 className
             )}
         />

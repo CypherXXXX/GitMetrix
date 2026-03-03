@@ -11,16 +11,20 @@
   "dependencies": {
     "@clerk/nextjs": "^6.37.5",
     "@clerk/themes": "^2.4.53",
+    "@supabase/supabase-js": "^2.98.0",
     "@upstash/redis": "^1.36.2",
     "clsx": "^2.1.1",
     "framer-motion": "^12.34.1",
+    "groq-sdk": "^0.37.0",
+    "inngest": "^3.52.5",
     "lucide-react": "^0.574.0",
     "next": "16.1.6",
     "octokit": "^5.0.5",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "recharts": "^3.7.0",
-    "tailwind-merge": "^3.4.1"
+    "tailwind-merge": "^3.4.1",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
