@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
-import { inngest } from "@/lib/inngest";
 import { IndexRepositorySchema, parseRepoUrl } from "@/lib/validators";
+import { indexRepository } from "@/lib/indexer";
 
 const STALE_INDEXING_MINUTES = 5;
 
@@ -11,6 +11,8 @@ function isStaleIndexing(updatedAt: string | null): boolean {
     const now = Date.now();
     return now - updated > STALE_INDEXING_MINUTES * 60 * 1000;
 }
+
+export const maxDuration = 300;
 
 export async function POST(request: NextRequest) {
     try {
@@ -87,10 +89,7 @@ export async function POST(request: NextRequest) {
             repositoryId = newRepo.id;
         }
 
-        await inngest.send({
-            name: "repo/index.requested",
-            data: { owner, name, repositoryId },
-        });
+        indexRepository(owner, name, repositoryId).catch(() => { });
 
         return NextResponse.json({
             repositoryId,

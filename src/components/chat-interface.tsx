@@ -182,6 +182,7 @@ function IndexingProgress({ status }: { status: ExtendedIndexingStatus | null })
     if (!status) {
         return (
             <div className="flex flex-col items-center gap-3">
+                <Loader2 className="h-5 w-5 animate-spin text-zinc-400" />
                 <div className="h-1.5 w-52 overflow-hidden rounded-full bg-zinc-800/80 sm:w-64">
                     <div className="skeleton-shimmer h-full w-full rounded-full" />
                 </div>
@@ -200,23 +201,29 @@ function IndexingProgress({ status }: { status: ExtendedIndexingStatus | null })
     const messages = {
         pending: "Starting indexing...",
         indexing: status.chunksProcessed
-            ? `Processing: ${status.chunksProcessed} chunks indexed`
+            ? `Indexing: ${status.fileCount || 0} files, ${status.chunksProcessed} chunks processed`
             : `Indexing ${status.fileCount || 0} files...`,
         completed: `Done — ${status.fileCount || 0} files indexed`,
         failed: status.error || "Indexing failed",
     };
 
+    const showProgressBar = status.status === "pending" || status.status === "indexing";
+
     return (
         <div className="flex flex-col items-center gap-3">
             {icons[status.status as keyof typeof icons]}
-            {status.status === "indexing" && (
+            {showProgressBar && (
                 <div className="h-1.5 w-52 overflow-hidden rounded-full bg-zinc-800/80 sm:w-64">
-                    <motion.div
-                        className="h-full rounded-full bg-linear-to-r from-indigo-500 to-purple-500"
-                        initial={{ width: "5%" }}
-                        animate={{ width: "85%" }}
-                        transition={{ duration: 30, ease: "linear" }}
-                    />
+                    {status.status === "pending" ? (
+                        <div className="skeleton-shimmer h-full w-full rounded-full" />
+                    ) : (
+                        <motion.div
+                            className="h-full rounded-full bg-linear-to-r from-indigo-500 to-purple-500"
+                            initial={{ width: "5%" }}
+                            animate={{ width: status.chunksProcessed ? "75%" : "40%" }}
+                            transition={{ duration: 2, ease: "easeOut" }}
+                        />
+                    )}
                 </div>
             )}
             <p className={`text-xs ${status.status === "failed" ? "text-red-400" : "text-zinc-500"}`}>
