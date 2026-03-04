@@ -63,7 +63,7 @@ async function callHuggingFaceAPI(
 }
 
 export async function generateEmbedding(text: string): Promise<number[]> {
-    const truncated = text.slice(0, 8000);
+    const truncated = text.slice(0, 2000);
     const result = await callHuggingFaceAPI(truncated);
     return result as number[];
 }
@@ -71,14 +71,31 @@ export async function generateEmbedding(text: string): Promise<number[]> {
 export async function generateEmbeddings(
     texts: string[]
 ): Promise<number[][]> {
-    const truncated = texts.map((t) => t.slice(0, 8000));
-    const batchSize = 8;
+    const truncated = texts.map((t) => t.slice(0, 2000));
+    const batchSize = 16;
     const allEmbeddings: number[][] = [];
 
     for (let i = 0; i < truncated.length; i += batchSize) {
         const batch = truncated.slice(i, i + batchSize);
-        const result = await callHuggingFaceAPI(batch);
-        allEmbeddings.push(...(result as number[][]));
+        let lastError: Error | null = null;
+
+        for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+                const result = await callHuggingFaceAPI(batch);
+                allEmbeddings.push(...(result as number[][]));
+                lastError = null;
+                break;
+            } catch (err) {
+                lastError = err instanceof Error ? err : new Error(String(err));
+                if (attempt < 2) {
+                    await new Promise((r) => setTimeout(r, Math.pow(2, attempt) * 1000));
+                }
+            }
+        }
+
+        if (lastError) {
+            throw lastError;
+        }
     }
 
     return allEmbeddings;

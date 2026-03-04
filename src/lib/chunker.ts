@@ -1,117 +1,319 @@
-const CHUNK_SIZE = 1500;
-const CHUNK_OVERLAP = 200;
+import type { ParsedFile, CodeChunk, CodeSymbol, SymbolType } from "./types";
 
-const FUNCTION_BOUNDARY_PATTERNS = [
-    /^(?:export\s+)?(?:async\s+)?function\s+\w+/,
-    /^(?:export\s+)?(?:const|let|var)\s+\w+\s*=\s*(?:async\s+)?\(/,
-    /^(?:export\s+)?(?:const|let|var)\s+\w+\s*=\s*(?:async\s+)?(?:\([^)]*\)|[a-zA-Z_]\w*)\s*=>/,
-    /^(?:export\s+)?class\s+\w+/,
-    /^(?:export\s+)?interface\s+\w+/,
-    /^(?:export\s+)?type\s+\w+/,
-    /^(?:export\s+)?enum\s+\w+/,
-    /^(?:public|private|protected|static|async)\s+\w+\s*\(/,
-    /^def\s+\w+/,
-    /^class\s+\w+/,
-];
+const TARGET_MIN_TOKENS = 300;
+const TARGET_MAX_TOKENS = 800;
+const APPROX_CHARS_PER_TOKEN = 4;
+const MIN_CHARS = TARGET_MIN_TOKENS * APPROX_CHARS_PER_TOKEN;
+const MAX_CHARS = TARGET_MAX_TOKENS * APPROX_CHARS_PER_TOKEN;
 
-function isBoundaryLine(line: string): boolean {
-    const trimmed = line.trim();
-    return FUNCTION_BOUNDARY_PATTERNS.some((pattern) => pattern.test(trimmed));
+export function chunkFile(parsedFile: ParsedFile): CodeChunk[] {
+    const { content, filePath, language, symbols } = parsedFile;
+
+    if (content.length <= MAX_CHARS && symbols.length === 0) {
+        return [createChunk(content, filePath, null, null, 0, language, 1, parsedFile.lineCount, null)];
+    }
+
+    if (symbols.length === 0) {
+        return chunkPlainText(content, filePath, language);
+    }
+
+    return chunkWithSymbols(parsedFile);
 }
 
-function createChunkWithContext(
-    content: string,
-    filePath: string,
-    chunkIndex: number
-): string {
-    return `File: ${filePath}\nChunk: ${chunkIndex}\n---\n${content}`;
-}
-
-function splitByBoundaries(content: string): string[] {
+function chunkWithSymbols(parsedFile: ParsedFile): CodeChunk[] {
+    const { content, filePath, language, symbols } = parsedFile;
     const lines = content.split("\n");
-    const sections: string[] = [];
-    let currentSection: string[] = [];
+    const chunks: CodeChunk[] = [];
+    let chunkIndex = 0;
 
-    for (const line of lines) {
-        if (isBoundaryLine(line) && currentSection.length > 3) {
-            sections.push(currentSection.join("\n"));
-            currentSection = [line];
-        } else {
-            currentSection.push(line);
+    const sortedSymbols = [...symbols].sort((a, b) => a.startLine - b.startLine);
+
+    const coveredLines = new Set<number>();
+    for (const sym of sortedSymbols) {
+        for (let l = sym.startLine; l <= sym.endLine; l++) {
+            coveredLines.add(l);
         }
     }
 
-    if (currentSection.length > 0) {
-        sections.push(currentSection.join("\n"));
+    let headerLines: string[] = [];
+    let headerStart = 1;
+    for (let i = 1; i <= lines.length; i++) {
+        if (coveredLines.has(i)) break;
+        headerLines.push(lines[i - 1]);
     }
 
-    return sections;
+    if (headerLines.length > 0) {
+        const headerContent = headerLines.join("\n").trim();
+        if (headerContent.length > 0) {
+            chunks.push(createChunk(
+                headerContent,
+                filePath,
+                "module-header",
+                "module",
+                chunkIndex++,
+                language,
+                headerStart,
+                headerLines.length,
+                null
+            ));
+        }
+    }
+
+    for (const symbol of sortedSymbols) {
+        if (symbol.parentSymbol && sortedSymbols.some(
+            (s) => s.name === symbol.parentSymbol && s.startLine <= symbol.startLine && s.endLine >= symbol.endLine
+        )) {
+            continue;
+        }
+
+        const symbolContent = symbol.content;
+
+        if (symbolContent.length <= MAX_CHARS) {
+            chunks.push(createChunk(
+                symbolContent,
+                filePath,
+                symbol.name,
+                symbol.type,
+                chunkIndex++,
+                language,
+                symbol.startLine,
+                symbol.endLine,
+                symbol.parentSymbol
+            ));
+        } else {
+            const subChunks = splitLargeSymbol(symbol, filePath, language, chunkIndex);
+            chunks.push(...subChunks);
+            chunkIndex += subChunks.length;
+        }
+    }
+
+    let gapBuffer: string[] = [];
+    let gapStart = 0;
+    for (let i = 1; i <= lines.length; i++) {
+        if (!coveredLines.has(i) && i > headerLines.length) {
+            if (gapBuffer.length === 0) gapStart = i;
+            gapBuffer.push(lines[i - 1]);
+        } else if (gapBuffer.length > 0) {
+            const gapContent = gapBuffer.join("\n").trim();
+            if (gapContent.length > MIN_CHARS / 2) {
+                chunks.push(createChunk(
+                    gapContent,
+                    filePath,
+                    null,
+                    null,
+                    chunkIndex++,
+                    language,
+                    gapStart,
+                    gapStart + gapBuffer.length - 1,
+                    null
+                ));
+            }
+            gapBuffer = [];
+        }
+    }
+
+    if (gapBuffer.length > 0) {
+        const gapContent = gapBuffer.join("\n").trim();
+        if (gapContent.length > MIN_CHARS / 2) {
+            chunks.push(createChunk(
+                gapContent,
+                filePath,
+                null,
+                null,
+                chunkIndex++,
+                language,
+                gapStart,
+                gapStart + gapBuffer.length - 1,
+                null
+            ));
+        }
+    }
+
+    return mergeSmallChunks(chunks, filePath, language);
 }
 
-function slidingWindowChunk(text: string): string[] {
-    const chunks: string[] = [];
-    let startIndex = 0;
+function splitLargeSymbol(
+    symbol: CodeSymbol,
+    filePath: string,
+    language: string,
+    startIndex: number
+): CodeChunk[] {
+    const lines = symbol.content.split("\n");
+    const chunks: CodeChunk[] = [];
+    let currentLines: string[] = [];
+    let currentStart = symbol.startLine;
+    let idx = startIndex;
 
-    while (startIndex < text.length) {
-        const endIndex = Math.min(startIndex + CHUNK_SIZE, text.length);
-        let chunk = text.slice(startIndex, endIndex);
+    const methodPattern = /^\s+(?:(?:public|private|protected|static|async|readonly)\s+)*(?:(?:get|set)\s+)?(\w+)\s*\(/;
+    const defPattern = /^\s+def\s+(\w+)/;
 
-        if (endIndex < text.length) {
-            const lastNewline = chunk.lastIndexOf("\n");
-            if (lastNewline > CHUNK_SIZE * 0.3) {
-                chunk = chunk.slice(0, lastNewline);
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const isMethodBoundary = methodPattern.test(line) || defPattern.test(line);
+        const currentContent = currentLines.join("\n");
+
+        if (isMethodBoundary && currentContent.length >= MIN_CHARS) {
+            chunks.push(createChunk(
+                currentContent.trim(),
+                filePath,
+                symbol.name,
+                symbol.type,
+                idx++,
+                language,
+                currentStart,
+                currentStart + currentLines.length - 1,
+                symbol.parentSymbol
+            ));
+            currentLines = [line];
+            currentStart = symbol.startLine + i;
+        } else {
+            currentLines.push(line);
+            if (currentLines.join("\n").length > MAX_CHARS) {
+                chunks.push(createChunk(
+                    currentContent.trim(),
+                    filePath,
+                    symbol.name,
+                    symbol.type,
+                    idx++,
+                    language,
+                    currentStart,
+                    currentStart + currentLines.length - 2,
+                    symbol.parentSymbol
+                ));
+                currentLines = [line];
+                currentStart = symbol.startLine + i;
             }
         }
+    }
 
-        if (chunk.trim().length > 0) {
-            chunks.push(chunk.trim());
-        }
-
-        const advance = chunk.length - CHUNK_OVERLAP;
-        if (advance <= 0) {
-            startIndex += Math.max(chunk.length, 1);
-        } else {
-            startIndex += advance;
+    if (currentLines.length > 0) {
+        const content = currentLines.join("\n").trim();
+        if (content.length > 0) {
+            chunks.push(createChunk(
+                content,
+                filePath,
+                symbol.name,
+                symbol.type,
+                idx++,
+                language,
+                currentStart,
+                currentStart + currentLines.length - 1,
+                symbol.parentSymbol
+            ));
         }
     }
 
     return chunks;
 }
 
-export function chunkFileContent(
-    content: string,
-    filePath: string
-): string[] {
-    if (content.length <= CHUNK_SIZE) {
-        return [createChunkWithContext(content, filePath, 0)];
-    }
+function chunkPlainText(content: string, filePath: string, language: string): CodeChunk[] {
+    const lines = content.split("\n");
+    const chunks: CodeChunk[] = [];
+    let currentLines: string[] = [];
+    let currentStart = 1;
+    let chunkIndex = 0;
 
-    const sections = splitByBoundaries(content);
-    const rawChunks: string[] = [];
+    for (let i = 0; i < lines.length; i++) {
+        currentLines.push(lines[i]);
+        const currentContent = currentLines.join("\n");
 
-    for (const section of sections) {
-        if (section.length <= CHUNK_SIZE) {
-            rawChunks.push(section);
-        } else {
-            rawChunks.push(...slidingWindowChunk(section));
+        if (currentContent.length >= MAX_CHARS) {
+            chunks.push(createChunk(
+                currentContent.trim(),
+                filePath,
+                null,
+                null,
+                chunkIndex++,
+                language,
+                currentStart,
+                currentStart + currentLines.length - 1,
+                null
+            ));
+            currentLines = [];
+            currentStart = i + 2;
         }
     }
 
-    const mergedChunks: string[] = [];
-    let buffer = "";
+    if (currentLines.length > 0) {
+        const content_str = currentLines.join("\n").trim();
+        if (content_str.length > 0) {
+            chunks.push(createChunk(
+                content_str,
+                filePath,
+                null,
+                null,
+                chunkIndex++,
+                language,
+                currentStart,
+                currentStart + currentLines.length - 1,
+                null
+            ));
+        }
+    }
 
-    for (const chunk of rawChunks) {
-        if (buffer.length + chunk.length + 1 <= CHUNK_SIZE) {
-            buffer = buffer ? `${buffer}\n${chunk}` : chunk;
+    return chunks;
+}
+
+function mergeSmallChunks(chunks: CodeChunk[], filePath: string, language: string): CodeChunk[] {
+    if (chunks.length <= 1) return chunks;
+
+    const merged: CodeChunk[] = [];
+    let buffer: CodeChunk | null = null;
+
+    for (const chunk of chunks) {
+        if (!buffer) {
+            buffer = chunk;
+            continue;
+        }
+
+        const combinedLength = buffer.content.length + chunk.content.length + 1;
+
+        if (combinedLength <= MAX_CHARS && !buffer.symbolName && !chunk.symbolName) {
+            buffer = {
+                ...buffer,
+                content: `${buffer.content}\n${chunk.content}`,
+                endLine: chunk.endLine,
+            };
         } else {
-            if (buffer) mergedChunks.push(buffer);
+            merged.push(buffer);
             buffer = chunk;
         }
     }
 
-    if (buffer) mergedChunks.push(buffer);
+    if (buffer) merged.push(buffer);
 
-    return mergedChunks.map((chunk, index) =>
-        createChunkWithContext(chunk, filePath, index)
-    );
+    return merged.map((c, i) => ({ ...c, chunkIndex: i }));
+}
+
+function createChunk(
+    content: string,
+    filePath: string,
+    symbolName: string | null,
+    symbolType: SymbolType | null,
+    chunkIndex: number,
+    language: string,
+    startLine: number,
+    endLine: number,
+    parentStructure: string | null
+): CodeChunk {
+    return {
+        content: `File: ${filePath}\nSymbol: ${symbolName || "none"}\nType: ${symbolType || "file-section"}\nLines: ${startLine}-${endLine}\nLanguage: ${language}\n---\n${content}`,
+        filePath,
+        symbolName,
+        symbolType,
+        chunkIndex,
+        language,
+        startLine,
+        endLine,
+        parentStructure,
+        metadata: {
+            filePath,
+            symbolName,
+            symbolType,
+            language,
+            startLine,
+            endLine,
+            parentStructure,
+        },
+    };
 }

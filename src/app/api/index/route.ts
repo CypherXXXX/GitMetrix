@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 import { IndexRepositorySchema, parseRepoUrl } from "@/lib/validators";
-import { indexRepository } from "@/lib/indexer";
+import { inngest } from "@/lib/inngest";
 
-const STALE_INDEXING_MINUTES = 5;
+const STALE_INDEXING_MINUTES = 10;
 
 function isStaleIndexing(updatedAt: string | null): boolean {
     if (!updatedAt) return true;
@@ -59,11 +59,21 @@ export async function POST(request: NextRequest) {
                 .delete()
                 .eq("repository_id", existingRepo.id);
 
+            await supabase
+                .from("dependency_edges")
+                .delete()
+                .eq("repository_id", existingRepo.id);
+
             const { error } = await supabase
                 .from("repositories")
                 .update({
                     status: "pending",
                     file_count: 0,
+                    total_files_discovered: 0,
+                    total_files_processed: 0,
+                    total_chunks: 0,
+                    total_vectors: 0,
+                    languages_json: null,
                     error_message: null,
                     updated_at: new Date().toISOString(),
                 })
@@ -89,7 +99,14 @@ export async function POST(request: NextRequest) {
             repositoryId = newRepo.id;
         }
 
-        indexRepository(owner, name, repositoryId).catch(() => { });
+        await inngest.send({
+            name: "repo/index.requested",
+            data: {
+                owner,
+                name,
+                repositoryId,
+            },
+        });
 
         return NextResponse.json({
             repositoryId,

@@ -1,138 +1,262 @@
 import { supabase } from "@/lib/supabase";
 import { generateEmbeddings } from "@/lib/embeddings";
-import { chunkFileContent } from "@/lib/chunker";
+import { parseFile, detectLanguage } from "@/lib/parser";
+import { chunkFile } from "@/lib/chunker";
+import { buildDependencyGraph, serializeGraph } from "@/lib/dependency-graph";
 import { Octokit } from "octokit";
+import type { ParsedFile, CodeChunk, IngestionStats, RepoTreeFile } from "./types";
 
 const EXCLUDED_EXTENSIONS = new Set([
-    ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp", ".bmp",
-    ".mp4", ".mp3", ".wav", ".ogg", ".avi", ".mov",
+    ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp", ".bmp", ".tiff",
+    ".mp4", ".mp3", ".wav", ".ogg", ".avi", ".mov", ".flv", ".wmv",
     ".woff", ".woff2", ".ttf", ".eot", ".otf",
-    ".pdf", ".doc", ".docx", ".xls", ".xlsx",
-    ".zip", ".tar", ".gz", ".rar", ".7z",
-    ".exe", ".dll", ".so", ".dylib",
-    ".lock", ".map",
+    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+    ".zip", ".tar", ".gz", ".rar", ".7z", ".bz2", ".xz",
+    ".exe", ".dll", ".so", ".dylib", ".bin", ".o", ".a", ".lib",
+    ".lock", ".map", ".min.js", ".min.css",
+    ".pyc", ".pyo", ".class", ".wasm",
+    ".sqlite", ".db",
 ]);
 
 const EXCLUDED_DIRECTORIES = new Set([
     "node_modules", ".git", ".next", "dist", "build", ".cache",
-    "__pycache__", ".venv", "vendor", "target", ".idea", ".vscode",
-    "coverage", ".nyc_output", ".turbo",
+    "__pycache__", ".venv", "venv", "env", "vendor", "target",
+    ".idea", ".vscode", ".vs", ".settings",
+    "coverage", ".nyc_output", ".turbo", ".parcel-cache",
+    ".terraform", ".gradle", ".maven",
+    "out", "output", ".output",
+    "tmp", "temp", ".tmp",
+    "logs",
 ]);
 
-const MAX_FILE_SIZE_BYTES = 100_000;
+const EXCLUDED_FILES = new Set([
+    "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb",
+    "composer.lock", "Gemfile.lock", "Cargo.lock", "go.sum",
+    "poetry.lock", "Pipfile.lock",
+    ".DS_Store", "Thumbs.db",
+]);
 
-function shouldIncludeFile(path: string): boolean {
+const MAX_FILE_SIZE_BYTES = 200_000;
+
+function shouldIncludeFile(path: string, size: number): boolean {
+    if (size > MAX_FILE_SIZE_BYTES) return false;
+
     const parts = path.split("/");
-
     for (const part of parts) {
         if (EXCLUDED_DIRECTORIES.has(part)) return false;
     }
+
+    const filename = parts[parts.length - 1].toLowerCase();
+    if (EXCLUDED_FILES.has(filename)) return false;
 
     const dotIndex = path.lastIndexOf(".");
     if (dotIndex === -1) return true;
     const extension = path.slice(dotIndex).toLowerCase();
     if (EXCLUDED_EXTENSIONS.has(extension)) return false;
 
-    const filename = parts[parts.length - 1].toLowerCase();
-    if (filename === "package-lock.json" || filename === "yarn.lock" || filename === "pnpm-lock.yaml") return false;
+    if (filename.endsWith(".min.js") || filename.endsWith(".min.css")) return false;
 
     return true;
 }
 
-interface GitHubTreeItem {
-    path?: string;
-    type?: string;
-    size?: number;
+export async function fetchRepoTree(
+    owner: string,
+    name: string
+): Promise<{ files: RepoTreeFile[]; truncated: boolean }> {
+    const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+
+    const { data } = await octokit.rest.git.getTree({
+        owner,
+        repo: name,
+        tree_sha: "HEAD",
+        recursive: "1",
+    });
+
+    const files: RepoTreeFile[] = (data.tree || [])
+        .filter((item: { type?: string; path?: string; size?: number }) =>
+            item.type === "blob" &&
+            item.path &&
+            shouldIncludeFile(item.path, item.size || 0)
+        )
+        .map((item: { path?: string; type?: string; size?: number; sha?: string }) => ({
+            path: item.path!,
+            type: item.type!,
+            size: item.size || 0,
+            sha: item.sha || "",
+        }));
+
+    return { files, truncated: data.truncated || false };
+}
+
+export async function fetchFileContent(
+    owner: string,
+    name: string,
+    filePath: string
+): Promise<string | null> {
+    const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+            const { data, headers } = await octokit.rest.repos.getContent({
+                owner,
+                repo: name,
+                path: filePath,
+            });
+
+            const remaining = parseInt(headers["x-ratelimit-remaining"] || "100", 10);
+            if (remaining < 10) {
+                const resetTime = parseInt(headers["x-ratelimit-reset"] || "0", 10) * 1000;
+                const waitMs = Math.max(resetTime - Date.now(), 1000);
+                await new Promise((r) => setTimeout(r, Math.min(waitMs, 60000)));
+            }
+
+            if ("content" in data && typeof data.content === "string") {
+                const decoded = Buffer.from(data.content, "base64").toString("utf-8");
+                if (decoded.trim().length === 0) return null;
+                if (isBinaryContent(decoded)) return null;
+                return decoded;
+            }
+
+            return null;
+        } catch (err: unknown) {
+            const status = (err as { status?: number }).status;
+            if (status === 403 || status === 429) {
+                const backoff = Math.pow(2, attempt + 1) * 2000;
+                await new Promise((r) => setTimeout(r, backoff));
+                continue;
+            }
+            return null;
+        }
+    }
+
+    return null;
+}
+
+function isBinaryContent(content: string): boolean {
+    const sample = content.slice(0, 1000);
+    let nullCount = 0;
+    for (let i = 0; i < sample.length; i++) {
+        if (sample.charCodeAt(i) === 0) nullCount++;
+    }
+    return nullCount > 5;
+}
+
+export async function fetchFilesBatch(
+    owner: string,
+    name: string,
+    paths: string[]
+): Promise<Array<{ path: string; content: string }>> {
+    const results: Array<{ path: string; content: string }> = [];
+    const concurrency = 5;
+
+    for (let i = 0; i < paths.length; i += concurrency) {
+        const batch = paths.slice(i, i + concurrency);
+        const promises = batch.map(async (filePath) => {
+            const content = await fetchFileContent(owner, name, filePath);
+            if (content) {
+                return { path: filePath, content };
+            }
+            return null;
+        });
+
+        const batchResults = await Promise.all(promises);
+        for (const result of batchResults) {
+            if (result) results.push(result);
+        }
+    }
+
+    return results;
 }
 
 export async function indexRepository(
     owner: string,
     name: string,
     repositoryId: string
-): Promise<{ filesProcessed: number; chunksInserted: number }> {
+): Promise<IngestionStats> {
+    const stats: IngestionStats = {
+        totalFilesDiscovered: 0,
+        totalFilesFetched: 0,
+        totalFilesParsed: 0,
+        totalFilesIndexed: 0,
+        totalChunksGenerated: 0,
+        totalVectorsStored: 0,
+        languageBreakdown: {},
+        errors: [],
+        startedAt: Date.now(),
+        completedAt: null,
+    };
+
     await supabase
         .from("repositories")
         .update({ status: "indexing", updated_at: new Date().toISOString() })
         .eq("id", repositoryId);
 
     try {
-        const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
+        await supabase
+            .from("repository_files")
+            .delete()
+            .eq("repository_id", repositoryId);
 
-        const { data } = await octokit.rest.git.getTree({
-            owner,
-            repo: name,
-            tree_sha: "HEAD",
-            recursive: "1",
-        });
+        await supabase
+            .from("dependency_edges")
+            .delete()
+            .eq("repository_id", repositoryId);
 
-        const filePaths = (data.tree as GitHubTreeItem[])
-            .filter(
-                (item) =>
-                    item.type === "blob" &&
-                    item.path &&
-                    (item.size === undefined || item.size <= MAX_FILE_SIZE_BYTES) &&
-                    shouldIncludeFile(item.path)
-            )
-            .map((item) => item.path as string);
+        const { files } = await fetchRepoTree(owner, name);
+        stats.totalFilesDiscovered = files.length;
 
-        const FILE_BATCH_SIZE = 5;
-        let totalChunksInserted = 0;
+        await supabase
+            .from("repositories")
+            .update({
+                total_files_discovered: files.length,
+                updated_at: new Date().toISOString(),
+            })
+            .eq("id", repositoryId);
 
-        for (let i = 0; i < filePaths.length; i += FILE_BATCH_SIZE) {
-            const batch = filePaths.slice(i, i + FILE_BATCH_SIZE);
+        const allParsedFiles: ParsedFile[] = [];
+        const FILE_BATCH_SIZE = 10;
 
-            const fileContents: Array<{ path: string; content: string }> = [];
+        for (let i = 0; i < files.length; i += FILE_BATCH_SIZE) {
+            const batchPaths = files.slice(i, i + FILE_BATCH_SIZE).map((f) => f.path);
 
-            for (const filePath of batch) {
+            let fetchedFiles: Array<{ path: string; content: string }>;
+            try {
+                fetchedFiles = await fetchFilesBatch(owner, name, batchPaths);
+            } catch (err) {
+                stats.errors.push(`Fetch batch error at offset ${i}: ${err instanceof Error ? err.message : String(err)}`);
+                continue;
+            }
+            stats.totalFilesFetched += fetchedFiles.length;
+
+            const parsedFiles: ParsedFile[] = [];
+            for (const file of fetchedFiles) {
                 try {
-                    const { data: fileData } = await octokit.rest.repos.getContent({
-                        owner,
-                        repo: name,
-                        path: filePath,
-                    });
+                    const parsed = parseFile(file.content, file.path);
+                    parsedFiles.push(parsed);
 
-                    if (
-                        "content" in fileData &&
-                        typeof fileData.content === "string"
-                    ) {
-                        const decoded = Buffer.from(
-                            fileData.content,
-                            "base64"
-                        ).toString("utf-8");
-
-                        if (decoded.trim().length > 0) {
-                            fileContents.push({ path: filePath, content: decoded });
-                        }
-                    }
-                } catch {
-                    continue;
+                    const lang = parsed.language;
+                    stats.languageBreakdown[lang] = (stats.languageBreakdown[lang] || 0) + 1;
+                } catch (err) {
+                    stats.errors.push(`Parse error ${file.path}: ${err instanceof Error ? err.message : String(err)}`);
                 }
             }
+            stats.totalFilesParsed += parsedFiles.length;
+            allParsedFiles.push(...parsedFiles);
 
-            const allChunks: Array<{
-                filePath: string;
-                content: string;
-                chunkIndex: number;
-            }> = [];
-
-            for (const file of fileContents) {
+            const allChunks: CodeChunk[] = [];
+            for (const parsed of parsedFiles) {
                 try {
-                    const chunks = chunkFileContent(file.content, file.path);
-                    chunks.forEach((chunk, index) => {
-                        allChunks.push({
-                            filePath: file.path,
-                            content: chunk,
-                            chunkIndex: index,
-                        });
-                    });
-                } catch {
-                    continue;
+                    const chunks = chunkFile(parsed);
+                    allChunks.push(...chunks);
+                } catch (err) {
+                    stats.errors.push(`Chunk error ${parsed.filePath}: ${err instanceof Error ? err.message : String(err)}`);
                 }
             }
+            stats.totalChunksGenerated += allChunks.length;
 
             if (allChunks.length === 0) continue;
 
-            const EMBED_BATCH_SIZE = 4;
+            const EMBED_BATCH_SIZE = 8;
             for (let j = 0; j < allChunks.length; j += EMBED_BATCH_SIZE) {
                 const chunkBatch = allChunks.slice(j, j + EMBED_BATCH_SIZE);
                 const texts = chunkBatch.map((c) => c.content);
@@ -140,7 +264,8 @@ export async function indexRepository(
                 let embeddings: number[][];
                 try {
                     embeddings = await generateEmbeddings(texts);
-                } catch {
+                } catch (err) {
+                    stats.errors.push(`Embedding error batch ${j}: ${err instanceof Error ? err.message : String(err)}`);
                     continue;
                 }
 
@@ -151,44 +276,107 @@ export async function indexRepository(
                     file_path: chunk.filePath,
                     content: chunk.content,
                     chunk_index: chunk.chunkIndex,
+                    symbol_name: chunk.symbolName,
+                    symbol_type: chunk.symbolType,
+                    language: chunk.language,
+                    start_line: chunk.startLine,
+                    end_line: chunk.endLine,
+                    metadata_json: chunk.metadata,
                     embedding: JSON.stringify(embeddings[idx]),
                 }));
 
-                await supabase.from("repository_files").insert(rows);
+                try {
+                    const { error } = await supabase.from("repository_files").insert(rows);
+                    if (error) {
+                        stats.errors.push(`Insert error: ${error.message}`);
+                    } else {
+                        stats.totalVectorsStored += rows.length;
+                        stats.totalFilesIndexed = new Set(
+                            allParsedFiles.slice(0, i + FILE_BATCH_SIZE).map((f) => f.filePath)
+                        ).size;
+                    }
+                } catch (err) {
+                    stats.errors.push(`DB error: ${err instanceof Error ? err.message : String(err)}`);
+                }
             }
-
-            totalChunksInserted += allChunks.length;
 
             await supabase
                 .from("repositories")
                 .update({
-                    file_count: Math.min(i + FILE_BATCH_SIZE, filePaths.length),
+                    file_count: stats.totalFilesIndexed,
+                    total_files_processed: stats.totalFilesFetched,
+                    total_chunks: stats.totalChunksGenerated,
+                    total_vectors: stats.totalVectorsStored,
                     updated_at: new Date().toISOString(),
                 })
                 .eq("id", repositoryId);
         }
 
+        try {
+            const graph = buildDependencyGraph(allParsedFiles);
+            const serialized = serializeGraph(graph);
+
+            if (serialized.edges.length > 0) {
+                const edgeRows = serialized.edges.map((edge) => ({
+                    repository_id: repositoryId,
+                    source_path: edge.sourcePath,
+                    target_path: edge.targetPath,
+                    edge_type: edge.edgeType,
+                    specifiers: edge.specifiers,
+                }));
+
+                const EDGE_BATCH = 50;
+                for (let k = 0; k < edgeRows.length; k += EDGE_BATCH) {
+                    const batch = edgeRows.slice(k, k + EDGE_BATCH);
+                    await supabase.from("dependency_edges").insert(batch);
+                }
+            }
+
+            await supabase
+                .from("repositories")
+                .update({
+                    languages_json: stats.languageBreakdown,
+                })
+                .eq("id", repositoryId);
+        } catch (err) {
+            stats.errors.push(`Dependency graph error: ${err instanceof Error ? err.message : String(err)}`);
+        }
+
+        stats.completedAt = Date.now();
+
         await supabase
             .from("repositories")
             .update({
                 status: "completed",
-                file_count: filePaths.length,
+                file_count: stats.totalFilesIndexed,
+                total_files_discovered: stats.totalFilesDiscovered,
+                total_files_processed: stats.totalFilesFetched,
+                total_chunks: stats.totalChunksGenerated,
+                total_vectors: stats.totalVectorsStored,
+                languages_json: stats.languageBreakdown,
                 indexed_at: new Date().toISOString(),
                 updated_at: new Date().toISOString(),
             })
             .eq("id", repositoryId);
 
-        return { filesProcessed: filePaths.length, chunksInserted: totalChunksInserted };
+        return stats;
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "Indexing failed";
+        stats.errors.push(errorMessage);
+
         await supabase
             .from("repositories")
             .update({
                 status: "failed",
                 error_message: errorMessage,
+                total_files_discovered: stats.totalFilesDiscovered,
+                total_files_processed: stats.totalFilesFetched,
+                total_chunks: stats.totalChunksGenerated,
+                total_vectors: stats.totalVectorsStored,
                 updated_at: new Date().toISOString(),
             })
             .eq("id", repositoryId);
+
         throw error;
     }
 }

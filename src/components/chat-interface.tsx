@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import type { ChatMessage, FileReference, IndexingStatus } from "@/lib/types";
+import type { ChatMessage, FileReference } from "@/lib/types";
 import {
     Send,
     Loader2,
@@ -27,7 +27,17 @@ interface StreamEvent {
     data?: string;
 }
 
-interface ExtendedIndexingStatus extends IndexingStatus {
+interface ExtendedIndexingStatus {
+    repositoryId: string;
+    status: "pending" | "indexing" | "completed" | "failed";
+    fileCount: number;
+    progress: number;
+    error: string | null;
+    totalFilesDiscovered?: number;
+    totalFilesProcessed?: number;
+    totalChunks?: number;
+    totalVectors?: number;
+    languages?: Record<string, number>;
     chunksProcessed?: number;
 }
 
@@ -200,8 +210,8 @@ function IndexingProgress({ status }: { status: ExtendedIndexingStatus | null })
 
     const messages = {
         pending: "Starting indexing...",
-        indexing: status.chunksProcessed
-            ? `Indexing: ${status.fileCount || 0} files, ${status.chunksProcessed} chunks processed`
+        indexing: status.totalChunks
+            ? `Indexing: ${status.totalFilesProcessed || 0}/${status.totalFilesDiscovered || 0} files, ${status.totalChunks} chunks`
             : `Indexing ${status.fileCount || 0} files...`,
         completed: `Done — ${status.fileCount || 0} files indexed`,
         failed: status.error || "Indexing failed",
@@ -295,9 +305,14 @@ export function ChatInterface({ username }: ChatInterfaceProps) {
                     repositoryId: repoId,
                     status: data.status,
                     fileCount: data.fileCount || 0,
-                    progress: data.status === "completed" ? 100 : data.status === "indexing" ? 50 : 0,
+                    progress: data.progress || (data.status === "completed" ? 100 : data.status === "indexing" ? 50 : 0),
                     error: data.error || null,
-                    chunksProcessed: data.chunksProcessed || 0,
+                    totalFilesDiscovered: data.totalFilesDiscovered || 0,
+                    totalFilesProcessed: data.totalFilesProcessed || 0,
+                    totalChunks: data.totalChunks || 0,
+                    totalVectors: data.totalVectors || 0,
+                    languages: data.languages || {},
+                    chunksProcessed: data.totalChunks || 0,
                 });
 
                 if (data.status === "completed" || data.status === "failed") {

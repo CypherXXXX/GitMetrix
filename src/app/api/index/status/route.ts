@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
 
         const { data: repository, error } = await supabase
             .from("repositories")
-            .select("id, status, file_count, error_message")
+            .select("id, status, file_count, total_files_discovered, total_files_processed, total_chunks, total_vectors, languages_json, error_message")
             .eq("id", validation.data.repositoryId)
             .single();
 
@@ -28,16 +28,20 @@ export async function GET(request: NextRequest) {
             );
         }
 
-        const { count } = await supabase
-            .from("repository_files")
-            .select("*", { count: "exact", head: true })
-            .eq("repository_id", repository.id);
+        const discovered = repository.total_files_discovered || 0;
+        const processed = repository.total_files_processed || 0;
+        const progress = discovered > 0 ? Math.round((processed / discovered) * 100) : 0;
 
         return NextResponse.json({
             repositoryId: repository.id,
             status: repository.status,
             fileCount: repository.file_count || 0,
-            chunksProcessed: count || 0,
+            totalFilesDiscovered: discovered,
+            totalFilesProcessed: processed,
+            totalChunks: repository.total_chunks || 0,
+            totalVectors: repository.total_vectors || 0,
+            languages: repository.languages_json || {},
+            progress,
             error: repository.error_message,
         });
     } catch (error) {
