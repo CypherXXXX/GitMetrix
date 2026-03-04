@@ -41,6 +41,8 @@ CRITICAL RULES:
 - Connect the dots between files — show how they work together
 - Use symbol names (function/class names) to provide precise references`;
 
+const PRIORITY_PATHS = ["src/", "app/", "lib/", "core/", "packages/", "server/"];
+
 interface MatchResult {
     id: string;
     file_path: string;
@@ -52,6 +54,144 @@ interface MatchResult {
     language: string | null;
     start_line: number | null;
     end_line: number | null;
+}
+
+function boostSimilarity(match: MatchResult): number {
+    const isPriority = PRIORITY_PATHS.some((p) => match.file_path.startsWith(p));
+    return isPriority ? match.similarity * 1.15 : match.similarity;
+}
+
+async function generateQueryVariations(query: string): Promise<string[]> {
+    try {
+        const response = await groq.chat.completions.create({
+            model: GROQ_MODEL,
+            messages: [
+                {
+                    role: "system",
+                    content: "Generate exactly 2 alternative search queries for a codebase search. Return ONLY the queries, one per line. No numbering, no explanations.",
+                },
+                {
+                    role: "user",
+                    content: query,
+                },
+            ],
+            temperature: 0.7,
+            max_tokens: 100,
+        });
+
+        const text = response.choices[0]?.message?.content || "";
+        const variations = text
+            .split("\n")
+            .map((l) => l.trim())
+            .filter((l) => l.length > 5)
+            .slice(0, 2);
+
+        return [query, ...variations];
+    } catch (_) {
+        return [query];
+    }
+}
+
+async function multiQuerySearch(
+    queries: string[],
+    repositoryId: string
+): Promise<MatchResult[]> {
+    const seen = new Map<string, MatchResult>();
+
+    for (const query of queries) {
+        const queryEmbedding = await generateEmbedding(query);
+
+        const { data: matches } = await supabase
+            .rpc("match_file_chunks", {
+                query_embedding: JSON.stringify(queryEmbedding),
+                target_repository_id: repositoryId,
+                match_threshold: 0.15,
+                match_count: 8,
+            });
+
+        if (matches) {
+            for (const match of matches as MatchResult[]) {
+                const key = `${match.file_path}:${match.chunk_index}`;
+                const existing = seen.get(key);
+                if (!existing || match.similarity > existing.similarity) {
+                    seen.set(key, match);
+                }
+            }
+        }
+    }
+
+    return Array.from(seen.values());
+}
+
+async function fullTextSearch(
+    query: string,
+    repositoryId: string
+): Promise<MatchResult[]> {
+    const searchTerms = query
+        .replace(/[^\w\s]/g, " ")
+        .split(/\s+/)
+        .filter((w) => w.length > 2)
+        .slice(0, 5)
+        .join(" & ");
+
+    if (!searchTerms) return [];
+
+    const { data } = await supabase
+        .from("repository_files")
+        .select("id, file_path, content, chunk_index, symbol_name, symbol_type, language, start_line, end_line")
+        .eq("repository_id", repositoryId)
+        .textSearch("content", searchTerms, { type: "plain" })
+        .limit(5);
+
+    if (!data) return [];
+
+    return data.map((row) => ({
+        ...row,
+        similarity: 0.4,
+    }));
+}
+
+async function fetchNeighborChunks(
+    matches: MatchResult[],
+    repositoryId: string
+): Promise<MatchResult[]> {
+    const existingKeys = new Set(matches.map((m) => `${m.file_path}:${m.chunk_index}`));
+    const neighbors: MatchResult[] = [];
+
+    const topMatches = matches
+        .sort((a, b) => b.similarity - a.similarity)
+        .slice(0, 5);
+
+    const neighborQueries: Array<{ filePath: string; indices: number[] }> = [];
+    for (const match of topMatches) {
+        const indices: number[] = [];
+        const prev = match.chunk_index - 1;
+        const next = match.chunk_index + 1;
+        if (prev >= 0 && !existingKeys.has(`${match.file_path}:${prev}`)) indices.push(prev);
+        if (!existingKeys.has(`${match.file_path}:${next}`)) indices.push(next);
+        if (indices.length > 0) neighborQueries.push({ filePath: match.file_path, indices });
+    }
+
+    for (const nq of neighborQueries) {
+        const { data } = await supabase
+            .from("repository_files")
+            .select("id, file_path, content, chunk_index, symbol_name, symbol_type, language, start_line, end_line")
+            .eq("repository_id", repositoryId)
+            .eq("file_path", nq.filePath)
+            .in("chunk_index", nq.indices);
+
+        if (data) {
+            for (const chunk of data) {
+                const key = `${chunk.file_path}:${chunk.chunk_index}`;
+                if (!existingKeys.has(key)) {
+                    existingKeys.add(key);
+                    neighbors.push({ ...chunk, similarity: 0.35 });
+                }
+            }
+        }
+    }
+
+    return neighbors;
 }
 
 export async function POST(request: NextRequest) {
@@ -81,25 +221,35 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        const queryEmbedding = await generateEmbedding(message);
+        const queryVariations = await generateQueryVariations(message);
 
-        const { data: matches, error: matchError } = await supabase
-            .rpc("match_file_chunks", {
-                query_embedding: JSON.stringify(queryEmbedding),
-                target_repository_id: repositoryId,
-                match_threshold: 0.15,
-                match_count: 10,
-            });
+        const [vectorMatches, ftsMatches] = await Promise.all([
+            multiQuerySearch(queryVariations, repositoryId),
+            fullTextSearch(message, repositoryId),
+        ]);
 
-        if (matchError) {
-            throw new Error(`Vector search failed: ${matchError.message}`);
+        const mergedMap = new Map<string, MatchResult>();
+        for (const match of vectorMatches) {
+            const key = `${match.file_path}:${match.chunk_index}`;
+            mergedMap.set(key, match);
+        }
+        for (const match of ftsMatches) {
+            const key = `${match.file_path}:${match.chunk_index}`;
+            if (!mergedMap.has(key)) {
+                mergedMap.set(key, match);
+            }
         }
 
-        const typedMatches = (matches as MatchResult[]) || [];
+        const mergedMatches = Array.from(mergedMap.values());
+        const neighborChunks = await fetchNeighborChunks(mergedMatches, repositoryId);
+        const allMatches = [...mergedMatches, ...neighborChunks];
 
-        const expandedContext = await expandContext(typedMatches, repositoryId);
+        const boostedMatches = allMatches
+            .map((m) => ({ ...m, similarity: boostSimilarity(m) }))
+            .sort((a, b) => b.similarity - a.similarity)
+            .slice(0, 15);
 
-        const fileReferences = expandedContext.map((match) => ({
+        const fileReferences = boostedMatches.map((match) => ({
             filePath: match.file_path,
             chunkContent: match.content.slice(0, 200),
             similarityScore: Math.round(match.similarity * 100) / 100,
@@ -107,7 +257,7 @@ export async function POST(request: NextRequest) {
             symbolType: match.symbol_type,
         }));
 
-        const contextBlock = expandedContext
+        const contextBlock = boostedMatches
             .map((match, i) => {
                 const symbolInfo = match.symbol_name
                     ? `[${match.symbol_type}: ${match.symbol_name}]`
@@ -127,7 +277,7 @@ export async function POST(request: NextRequest) {
 
         let depInfo = "";
         if (depEdges && depEdges.length > 0) {
-            const relevantPaths = new Set(expandedContext.map((m) => m.file_path));
+            const relevantPaths = new Set(boostedMatches.map((m) => m.file_path));
             const relevantEdges = depEdges.filter(
                 (e: { source_path: string; target_path: string }) =>
                     relevantPaths.has(e.source_path) || relevantPaths.has(e.target_path)
@@ -218,79 +368,4 @@ export async function POST(request: NextRequest) {
             { status: 500, headers: { "Content-Type": "application/json" } }
         );
     }
-}
-
-async function expandContext(
-    initialMatches: MatchResult[],
-    repositoryId: string
-): Promise<MatchResult[]> {
-    if (initialMatches.length === 0) return [];
-
-    const contextMap = new Map<string, MatchResult>();
-    for (const match of initialMatches) {
-        const key = `${match.file_path}:${match.chunk_index}`;
-        contextMap.set(key, match);
-    }
-
-    const matchedFiles = [...new Set(initialMatches.map((m) => m.file_path))];
-    const topFiles = matchedFiles.slice(0, 3);
-
-    for (const filePath of topFiles) {
-        const { data: sameFileChunks } = await supabase
-            .from("repository_files")
-            .select("id, file_path, content, chunk_index, symbol_name, symbol_type, language, start_line, end_line")
-            .eq("repository_id", repositoryId)
-            .eq("file_path", filePath)
-            .order("chunk_index", { ascending: true })
-            .limit(5);
-
-        if (sameFileChunks) {
-            for (const chunk of sameFileChunks) {
-                const key = `${chunk.file_path}:${chunk.chunk_index}`;
-                if (!contextMap.has(key)) {
-                    contextMap.set(key, {
-                        ...chunk,
-                        similarity: 0.5,
-                    });
-                }
-            }
-        }
-    }
-
-    const { data: depEdges } = await supabase
-        .from("dependency_edges")
-        .select("target_path")
-        .eq("repository_id", repositoryId)
-        .in("source_path", topFiles)
-        .limit(10);
-
-    if (depEdges && depEdges.length > 0) {
-        const depPaths = [...new Set(depEdges.map((e: { target_path: string }) => e.target_path))].slice(0, 3);
-
-        for (const depPath of depPaths) {
-            const { data: depChunks } = await supabase
-                .from("repository_files")
-                .select("id, file_path, content, chunk_index, symbol_name, symbol_type, language, start_line, end_line")
-                .eq("repository_id", repositoryId)
-                .eq("file_path", depPath)
-                .order("chunk_index", { ascending: true })
-                .limit(2);
-
-            if (depChunks) {
-                for (const chunk of depChunks) {
-                    const key = `${chunk.file_path}:${chunk.chunk_index}`;
-                    if (!contextMap.has(key)) {
-                        contextMap.set(key, {
-                            ...chunk,
-                            similarity: 0.3,
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    const allChunks = Array.from(contextMap.values());
-    allChunks.sort((a, b) => b.similarity - a.similarity);
-    return allChunks.slice(0, 15);
 }

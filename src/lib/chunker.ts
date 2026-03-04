@@ -5,19 +5,26 @@ const TARGET_MAX_TOKENS = 800;
 const APPROX_CHARS_PER_TOKEN = 4;
 const MIN_CHARS = TARGET_MIN_TOKENS * APPROX_CHARS_PER_TOKEN;
 const MAX_CHARS = TARGET_MAX_TOKENS * APPROX_CHARS_PER_TOKEN;
+const MIN_CHUNK_CHARS = 100;
 
 export function chunkFile(parsedFile: ParsedFile): CodeChunk[] {
     const { content, filePath, language, symbols } = parsedFile;
 
+    if (content.trim().length < MIN_CHUNK_CHARS) {
+        return [];
+    }
+
+    let chunks: CodeChunk[];
+
     if (content.length <= MAX_CHARS && symbols.length === 0) {
-        return [createChunk(content, filePath, null, null, 0, language, 1, parsedFile.lineCount, null)];
+        chunks = [createChunk(content, filePath, null, null, 0, language, 1, parsedFile.lineCount, null)];
+    } else if (symbols.length === 0) {
+        chunks = chunkPlainText(content, filePath, language);
+    } else {
+        chunks = chunkWithSymbols(parsedFile);
     }
 
-    if (symbols.length === 0) {
-        return chunkPlainText(content, filePath, language);
-    }
-
-    return chunkWithSymbols(parsedFile);
+    return chunks.filter((c) => c.content.trim().length >= MIN_CHUNK_CHARS);
 }
 
 function chunkWithSymbols(parsedFile: ParsedFile): CodeChunk[] {

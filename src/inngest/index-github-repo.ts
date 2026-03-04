@@ -1,5 +1,5 @@
 import { inngest } from "@/lib/inngest";
-import { fetchRepoTree, fetchFilesBatch, indexRepository } from "@/lib/indexer";
+import { indexRepository } from "@/lib/indexer";
 import { supabase } from "@/lib/supabase";
 
 export const indexGithubRepo = inngest.createFunction(
@@ -39,23 +39,6 @@ export const indexGithubRepo = inngest.createFunction(
             return { validated: true };
         });
 
-        const treeResult = await step.run("fetch-repository-tree", async () => {
-            const { files, truncated } = await fetchRepoTree(owner, name);
-            await supabase
-                .from("repositories")
-                .update({
-                    total_files_discovered: files.length,
-                    updated_at: new Date().toISOString(),
-                })
-                .eq("id", repositoryId);
-
-            return {
-                fileCount: files.length,
-                truncated,
-                filePaths: files.map((f) => f.path),
-            };
-        });
-
         const stats = await step.run("process-and-index-files", async () => {
             return await indexRepository(owner, name, repositoryId);
         });
@@ -79,7 +62,7 @@ export const indexGithubRepo = inngest.createFunction(
 
         return {
             repositoryId,
-            filesDiscovered: treeResult.fileCount,
+            filesDiscovered: stats.totalFilesDiscovered,
             filesProcessed: stats.totalFilesFetched,
             filesParsed: stats.totalFilesParsed,
             filesIndexed: stats.totalFilesIndexed,

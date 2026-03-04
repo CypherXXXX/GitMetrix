@@ -1,8 +1,9 @@
 import { supabase } from "@/lib/supabase";
 import { generateEmbeddings } from "@/lib/embeddings";
-import { parseFile, detectLanguage } from "@/lib/parser";
+import { parseFile } from "@/lib/parser";
 import { chunkFile } from "@/lib/chunker";
 import { buildDependencyGraph, serializeGraph } from "@/lib/dependency-graph";
+import { redis } from "@/lib/redis";
 import { Octokit } from "octokit";
 import type { ParsedFile, CodeChunk, IngestionStats, RepoTreeFile } from "./types";
 
@@ -27,6 +28,9 @@ const EXCLUDED_DIRECTORIES = new Set([
     "out", "output", ".output",
     "tmp", "temp", ".tmp",
     "logs",
+    "examples", "docs", "storybook", "playground",
+    "benchmarks", "fixtures", "__tests__", "__mocks__",
+    ".storybook", ".playwright", "e2e",
 ]);
 
 const EXCLUDED_FILES = new Set([
@@ -37,6 +41,15 @@ const EXCLUDED_FILES = new Set([
 ]);
 
 const MAX_FILE_SIZE_BYTES = 200_000;
+const MAX_FILES = 1500;
+const FETCH_CONCURRENCY = 15;
+const FILE_BATCH_SIZE = 30;
+const EMBED_BATCH_SIZE = 32;
+const DB_INSERT_BATCH_SIZE = 100;
+const PROGRESS_UPDATE_INTERVAL = 30;
+const REDIS_TREE_TTL = 3600;
+
+const PRIORITY_DIRS = ["src/", "app/", "lib/", "packages/", "core/", "server/", "api/"];
 
 function shouldIncludeFile(path: string, size: number): boolean {
     if (size > MAX_FILE_SIZE_BYTES) return false;
@@ -59,10 +72,36 @@ function shouldIncludeFile(path: string, size: number): boolean {
     return true;
 }
 
+function prioritizeFiles(files: RepoTreeFile[]): RepoTreeFile[] {
+    const priority: RepoTreeFile[] = [];
+    const rest: RepoTreeFile[] = [];
+
+    for (const file of files) {
+        const isPriority = PRIORITY_DIRS.some((dir) => file.path.startsWith(dir));
+        if (isPriority) {
+            priority.push(file);
+        } else {
+            rest.push(file);
+        }
+    }
+
+    return [...priority, ...rest].slice(0, MAX_FILES);
+}
+
 export async function fetchRepoTree(
     owner: string,
     name: string
 ): Promise<{ files: RepoTreeFile[]; truncated: boolean }> {
+    const cacheKey = `repo-tree:${owner}/${name}`;
+
+    try {
+        const cached = await redis.get<{ files: RepoTreeFile[]; truncated: boolean }>(cacheKey);
+        if (cached && cached.files && cached.files.length > 0) {
+            const filtered = cached.files.filter((f) => shouldIncludeFile(f.path, f.size));
+            return { files: prioritizeFiles(filtered), truncated: cached.truncated };
+        }
+    } catch (_) { }
+
     const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
 
     const { data: repoData } = await octokit.rest.repos.get({
@@ -87,11 +126,9 @@ export async function fetchRepoTree(
         recursive: "1",
     });
 
-    const files: RepoTreeFile[] = (data.tree || [])
+    const allFiles: RepoTreeFile[] = (data.tree || [])
         .filter((item: { type?: string; path?: string; size?: number }) =>
-            item.type === "blob" &&
-            item.path &&
-            shouldIncludeFile(item.path, item.size || 0)
+            item.type === "blob" && item.path
         )
         .map((item: { path?: string; type?: string; size?: number; sha?: string }) => ({
             path: item.path!,
@@ -100,7 +137,12 @@ export async function fetchRepoTree(
             sha: item.sha || "",
         }));
 
-    return { files, truncated: data.truncated || false };
+    try {
+        await redis.set(cacheKey, { files: allFiles, truncated: data.truncated || false }, { ex: REDIS_TREE_TTL });
+    } catch (_) { }
+
+    const filtered = allFiles.filter((f) => shouldIncludeFile(f.path, f.size));
+    return { files: prioritizeFiles(filtered), truncated: data.truncated || false };
 }
 
 export async function fetchFileContent(
@@ -162,10 +204,9 @@ export async function fetchFilesBatch(
     paths: string[]
 ): Promise<Array<{ path: string; content: string }>> {
     const results: Array<{ path: string; content: string }> = [];
-    const concurrency = 5;
 
-    for (let i = 0; i < paths.length; i += concurrency) {
-        const batch = paths.slice(i, i + concurrency);
+    for (let i = 0; i < paths.length; i += FETCH_CONCURRENCY) {
+        const batch = paths.slice(i, i + FETCH_CONCURRENCY);
         const promises = batch.map(async (filePath) => {
             const content = await fetchFileContent(owner, name, filePath);
             if (content) {
@@ -229,7 +270,8 @@ export async function indexRepository(
             .eq("id", repositoryId);
 
         const allParsedFiles: ParsedFile[] = [];
-        const FILE_BATCH_SIZE = 10;
+        const pendingInsertRows: Array<Record<string, unknown>> = [];
+        let filesSinceLastUpdate = 0;
 
         for (let i = 0; i < files.length; i += FILE_BATCH_SIZE) {
             const batchPaths = files.slice(i, i + FILE_BATCH_SIZE).map((f) => f.path);
@@ -248,7 +290,6 @@ export async function indexRepository(
                 try {
                     const parsed = parseFile(file.content, file.path);
                     parsedFiles.push(parsed);
-
                     const lang = parsed.language;
                     stats.languageBreakdown[lang] = (stats.languageBreakdown[lang] || 0) + 1;
                 } catch (err) {
@@ -271,7 +312,6 @@ export async function indexRepository(
 
             if (allChunks.length === 0) continue;
 
-            const EMBED_BATCH_SIZE = 8;
             for (let j = 0; j < allChunks.length; j += EMBED_BATCH_SIZE) {
                 const chunkBatch = allChunks.slice(j, j + EMBED_BATCH_SIZE);
                 const texts = chunkBatch.map((c) => c.content);
@@ -286,45 +326,66 @@ export async function indexRepository(
 
                 if (embeddings.length !== chunkBatch.length) continue;
 
-                const rows = chunkBatch.map((chunk, idx) => ({
-                    repository_id: repositoryId,
-                    file_path: chunk.filePath,
-                    content: chunk.content,
-                    chunk_index: chunk.chunkIndex,
-                    symbol_name: chunk.symbolName,
-                    symbol_type: chunk.symbolType,
-                    language: chunk.language,
-                    start_line: chunk.startLine,
-                    end_line: chunk.endLine,
-                    metadata_json: chunk.metadata,
-                    embedding: JSON.stringify(embeddings[idx]),
-                }));
+                for (let k = 0; k < chunkBatch.length; k++) {
+                    pendingInsertRows.push({
+                        repository_id: repositoryId,
+                        file_path: chunkBatch[k].filePath,
+                        content: chunkBatch[k].content,
+                        chunk_index: chunkBatch[k].chunkIndex,
+                        symbol_name: chunkBatch[k].symbolName,
+                        symbol_type: chunkBatch[k].symbolType,
+                        language: chunkBatch[k].language,
+                        start_line: chunkBatch[k].startLine,
+                        end_line: chunkBatch[k].endLine,
+                        metadata_json: chunkBatch[k].metadata,
+                        embedding: JSON.stringify(embeddings[k]),
+                    });
+                }
 
-                try {
-                    const { error } = await supabase.from("repository_files").insert(rows);
-                    if (error) {
-                        stats.errors.push(`Insert error: ${error.message}`);
-                    } else {
-                        stats.totalVectorsStored += rows.length;
-                        stats.totalFilesIndexed = new Set(
-                            allParsedFiles.slice(0, i + FILE_BATCH_SIZE).map((f) => f.filePath)
-                        ).size;
+                if (pendingInsertRows.length >= DB_INSERT_BATCH_SIZE) {
+                    const toInsert = pendingInsertRows.splice(0, DB_INSERT_BATCH_SIZE);
+                    try {
+                        const { error } = await supabase.from("repository_files").insert(toInsert);
+                        if (error) {
+                            stats.errors.push(`Insert error: ${error.message}`);
+                        } else {
+                            stats.totalVectorsStored += toInsert.length;
+                        }
+                    } catch (err) {
+                        stats.errors.push(`DB error: ${err instanceof Error ? err.message : String(err)}`);
                     }
-                } catch (err) {
-                    stats.errors.push(`DB error: ${err instanceof Error ? err.message : String(err)}`);
                 }
             }
 
-            await supabase
-                .from("repositories")
-                .update({
-                    file_count: stats.totalFilesIndexed,
-                    total_files_processed: stats.totalFilesFetched,
-                    total_chunks: stats.totalChunksGenerated,
-                    total_vectors: stats.totalVectorsStored,
-                    updated_at: new Date().toISOString(),
-                })
-                .eq("id", repositoryId);
+            filesSinceLastUpdate += fetchedFiles.length;
+            stats.totalFilesIndexed = new Set(allParsedFiles.map((f) => f.filePath)).size;
+
+            if (filesSinceLastUpdate >= PROGRESS_UPDATE_INTERVAL) {
+                filesSinceLastUpdate = 0;
+                await supabase
+                    .from("repositories")
+                    .update({
+                        file_count: stats.totalFilesIndexed,
+                        total_files_processed: stats.totalFilesFetched,
+                        total_chunks: stats.totalChunksGenerated,
+                        total_vectors: stats.totalVectorsStored,
+                        updated_at: new Date().toISOString(),
+                    })
+                    .eq("id", repositoryId);
+            }
+        }
+
+        if (pendingInsertRows.length > 0) {
+            try {
+                const { error } = await supabase.from("repository_files").insert(pendingInsertRows);
+                if (error) {
+                    stats.errors.push(`Final insert error: ${error.message}`);
+                } else {
+                    stats.totalVectorsStored += pendingInsertRows.length;
+                }
+            } catch (err) {
+                stats.errors.push(`Final DB error: ${err instanceof Error ? err.message : String(err)}`);
+            }
         }
 
         try {
@@ -340,24 +401,17 @@ export async function indexRepository(
                     specifiers: edge.specifiers,
                 }));
 
-                const EDGE_BATCH = 50;
-                for (let k = 0; k < edgeRows.length; k += EDGE_BATCH) {
-                    const batch = edgeRows.slice(k, k + EDGE_BATCH);
+                for (let k = 0; k < edgeRows.length; k += DB_INSERT_BATCH_SIZE) {
+                    const batch = edgeRows.slice(k, k + DB_INSERT_BATCH_SIZE);
                     await supabase.from("dependency_edges").insert(batch);
                 }
             }
-
-            await supabase
-                .from("repositories")
-                .update({
-                    languages_json: stats.languageBreakdown,
-                })
-                .eq("id", repositoryId);
         } catch (err) {
             stats.errors.push(`Dependency graph error: ${err instanceof Error ? err.message : String(err)}`);
         }
 
         stats.completedAt = Date.now();
+        stats.totalFilesIndexed = new Set(allParsedFiles.map((f) => f.filePath)).size;
 
         await supabase
             .from("repositories")

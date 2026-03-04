@@ -72,7 +72,7 @@ export async function generateEmbeddings(
     texts: string[]
 ): Promise<number[][]> {
     const truncated = texts.map((t) => t.slice(0, 2000));
-    const batchSize = 16;
+    const batchSize = 32;
     const allEmbeddings: number[][] = [];
 
     for (let i = 0; i < truncated.length; i += batchSize) {
