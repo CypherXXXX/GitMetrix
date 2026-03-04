@@ -31,7 +31,6 @@ CREATE INDEX IF NOT EXISTS idx_repository_files_symbol ON repository_files(symbo
 CREATE INDEX IF NOT EXISTS idx_repository_files_language ON repository_files(language) WHERE language IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_repository_files_file_path ON repository_files(file_path);
 
--- Remove existing duplicate chunks before applying unique index
 DELETE FROM repository_files a
 USING repository_files b
 WHERE a.ctid < b.ctid
@@ -41,6 +40,8 @@ WHERE a.ctid < b.ctid
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_repository_files_unique_chunk
     ON repository_files(repository_id, file_path, chunk_index);
+
+DROP FUNCTION IF EXISTS match_file_chunks(vector, uuid, double precision, integer);
 
 CREATE OR REPLACE FUNCTION match_file_chunks(
     query_embedding vector(384),
