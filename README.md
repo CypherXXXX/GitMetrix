@@ -90,8 +90,8 @@ User selects repo → GitHub API fetches file tree → Redis-cached tree (1hr TT
    - Updates progress every 30 processed files
 3. `/api/index/status` polls for completion with enriched stats (files discovered, processed, chunks, vectors, languages)
 
-**Chat Pipeline (Hybrid RAG):**
-1. User query → Groq generates 2 alternative search queries (3 total)
+**Chat Pipeline (Hybrid RAG with LLM Failover):**
+1. User query → LLM generates 2 alternative search queries (3 total) via failover router
 2. All 3 queries embedded → pgvector cosine similarity search (8 results each)
 3. PostgreSQL full-text search runs in parallel using GIN index
 4. Vector + FTS results merged and deduplicated
@@ -99,7 +99,7 @@ User selects repo → GitHub API fetches file tree → Redis-cached tree (1hr TT
 6. Dependency graph neighbors retrieved for matched files
 7. File importance weighting applied (1.15× for `src/`, `app/`, `lib/`, `core/`)
 8. Top 15 context blocks assembled with symbol metadata and line ranges
-9. Context + conversation history → Groq LLaMA 3.3 70B
+9. Context + conversation history → LLM router (Groq → OpenRouter → Together AI)
 10. Response streamed back via Server-Sent Events
 
 ---
@@ -115,7 +115,9 @@ User selects repo → GitHub API fetches file tree → Redis-cached tree (1hr TT
 | Database | Supabase (PostgreSQL + pgvector) |
 | Cache | Upstash Redis (tree caching, 1hr TTL) |
 | Embeddings | HuggingFace Inference API (MiniLM-L6-v2, 384-dim) |
-| LLM | Groq (LLaMA 3.3 70B Versatile) |
+| LLM (Primary) | Groq (LLaMA 3.3 70B Versatile) |
+| LLM (Fallback 1) | OpenRouter (Qwen 2.5 7B Instruct) |
+| LLM (Fallback 2) | Together AI (Qwen 2.5 7B Instruct Turbo) |
 | Background Jobs | Inngest (serverless, runs on Vercel) |
 | GitHub API | Octokit |
 | Charts | Recharts |
@@ -175,9 +177,14 @@ GitMetrix/
 │   │   ├── dependency-graph.ts           # Import/export graph builder + BFS traversal
 │   │   ├── embeddings.ts                 # HuggingFace embedding client (batch 32, retry)
 │   │   ├── github.ts                     # GitHub API helpers (dashboard stats, repos)
-│   │   ├── groq.ts                       # Groq SDK singleton
+│   │   ├── groq.ts                       # Groq SDK singleton (legacy, used by llm/groq.ts)
 │   │   ├── indexer.ts                    # Pipeline orchestrator (fetch→parse→chunk→embed→store)
 │   │   ├── inngest.ts                    # Inngest client instance
+│   │   ├── llm/
+│   │   │   ├── groq.ts                   # Groq provider (LLaMA 3.3 70B)
+│   │   │   ├── openrouter.ts             # OpenRouter provider (Qwen 2.5 7B)
+│   │   │   ├── together.ts              # Together AI provider (Qwen 2.5 7B Turbo)
+│   │   │   └── llmRouter.ts             # Failover router (Groq → OpenRouter → Together)
 │   │   ├── parser.ts                     # Multi-language AST symbol extractor (10 languages)
 │   │   ├── redis.ts                      # Upstash Redis client
 │   │   ├── supabase.ts                   # Supabase client
@@ -215,6 +222,8 @@ UPSTASH_REDIS_REST_TOKEN=
 
 HUGGINGFACE_API_KEY=
 GROQ_API_KEY=
+OPENROUTER_API_KEY=
+TOGETHER_API_KEY=
 
 INNGEST_EVENT_KEY=
 INNGEST_SIGNING_KEY=
@@ -249,6 +258,25 @@ GitMetrix is designed for **Vercel** deployment. Inngest runs as a serverless fu
 | Supported Languages | 10 (TS, JS, Python, Java, Go, Rust, C/C++, Ruby, PHP) |
 | Retrieval Queries Per Chat | 3 (multi-query) |
 | Context Chunks Per Response | Up to 15 |
+| LLM Failover Chain | Groq → OpenRouter → Together AI |
+
+---
+
+## LLM Failover Architecture
+
+```
+User Query → LLM Router
+                ├── Try Groq (LLaMA 3.3 70B)          ← Primary
+                ├── Try OpenRouter (Qwen 2.5 7B)      ← Fallback 1
+                └── Try Together AI (Qwen 2.5 7B)     ← Fallback 2
+```
+
+The system uses a sequential failover strategy:
+- **Groq** is the primary provider (fastest, largest model)
+- If Groq is rate-limited or down, **OpenRouter** takes over automatically
+- If OpenRouter also fails, **Together AI** is the final fallback
+- All three providers receive identical system prompts, RAG context, and message history
+- The system works with only `GROQ_API_KEY` configured — fallbacks activate when their keys are present
 
 ---
 

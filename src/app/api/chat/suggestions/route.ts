@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
-import { groq, GROQ_MODEL } from "@/lib/groq";
+import { llmComplete } from "@/lib/llm/llmRouter";
 
 export async function GET(request: NextRequest) {
     try {
@@ -60,14 +60,10 @@ Generate exactly 3 specific, insightful questions a developer would ask about TH
 Return ONLY a JSON array of 3 strings, nothing else. Example format:
 ["question 1", "question 2", "question 3"]`;
 
-        const completion = await groq.chat.completions.create({
-            model: GROQ_MODEL,
-            messages: [{ role: "user", content: prompt }],
-            temperature: 0.8,
-            max_tokens: 256,
-        });
-
-        const raw = completion.choices[0]?.message?.content || "";
+        const { text: raw } = await llmComplete(
+            [{ role: "user", content: prompt }],
+            { temperature: 0.8, max_tokens: 256 }
+        );
         let suggestions: string[];
 
         try {

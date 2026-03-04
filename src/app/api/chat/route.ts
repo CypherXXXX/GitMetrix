@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { supabase } from "@/lib/supabase";
 import { generateEmbedding } from "@/lib/embeddings";
-import { groq, GROQ_MODEL } from "@/lib/groq";
+import { llmComplete, llmStream } from "@/lib/llm/llmRouter";
 import { ChatMessageSchema } from "@/lib/validators";
 
 const SYSTEM_PROMPT = `You are GitMetrix AI, a senior software engineer and expert code analyst embedded in a developer tool. Your job is to deeply analyze GitHub repository codebases and provide precise, insightful answers.
@@ -63,9 +63,8 @@ function boostSimilarity(match: MatchResult): number {
 
 async function generateQueryVariations(query: string): Promise<string[]> {
     try {
-        const response = await groq.chat.completions.create({
-            model: GROQ_MODEL,
-            messages: [
+        const { text } = await llmComplete(
+            [
                 {
                     role: "system",
                     content: "Generate exactly 2 alternative search queries for a codebase search. Return ONLY the queries, one per line. No numbering, no explanations.",
@@ -75,11 +74,9 @@ async function generateQueryVariations(query: string): Promise<string[]> {
                     content: query,
                 },
             ],
-            temperature: 0.7,
-            max_tokens: 100,
-        });
+            { temperature: 0.7, max_tokens: 100 }
+        );
 
-        const text = response.choices[0]?.message?.content || "";
         const variations = text
             .split("\n")
             .map((l) => l.trim())
@@ -313,13 +310,7 @@ export async function POST(request: NextRequest) {
 
         messages.push({ role: "user", content: message });
 
-        const stream = await groq.chat.completions.create({
-            model: GROQ_MODEL,
-            messages,
-            temperature: 0.2,
-            max_tokens: 4096,
-            stream: true,
-        });
+        const { stream } = await llmStream(messages, { temperature: 0.2, max_tokens: 4096 });
 
         const encoder = new TextEncoder();
         const readableStream = new ReadableStream({
@@ -331,10 +322,9 @@ export async function POST(request: NextRequest) {
                     );
 
                     for await (const chunk of stream) {
-                        const content = chunk.choices[0]?.delta?.content;
-                        if (content) {
+                        if (chunk.content) {
                             controller.enqueue(
-                                encoder.encode(`data: ${JSON.stringify({ type: "content", data: content })}\n\n`)
+                                encoder.encode(`data: ${JSON.stringify({ type: "content", data: chunk.content })}\n\n`)
                             );
                         }
                     }
