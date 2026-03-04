@@ -65,10 +65,25 @@ export async function fetchRepoTree(
 ): Promise<{ files: RepoTreeFile[]; truncated: boolean }> {
     const octokit = new Octokit({ auth: process.env.GITHUB_TOKEN });
 
+    const { data: repoData } = await octokit.rest.repos.get({
+        owner,
+        repo: name,
+    });
+
+    const defaultBranch = repoData.default_branch;
+
+    const { data: branchData } = await octokit.rest.repos.getBranch({
+        owner,
+        repo: name,
+        branch: defaultBranch,
+    });
+
+    const treeSha = branchData.commit.commit.tree.sha;
+
     const { data } = await octokit.rest.git.getTree({
         owner,
         repo: name,
-        tree_sha: "HEAD",
+        tree_sha: treeSha,
         recursive: "1",
     });
 
