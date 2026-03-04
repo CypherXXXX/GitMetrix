@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 import { IndexRepositorySchema, parseRepoUrl } from "@/lib/validators";
-import { inngest } from "@/lib/inngest";
+import { indexRepository } from "@/lib/indexer";
 
 const STALE_INDEXING_MINUTES = 10;
 
@@ -12,7 +12,7 @@ function isStaleIndexing(updatedAt: string | null): boolean {
     return now - updated > STALE_INDEXING_MINUTES * 60 * 1000;
 }
 
-export const maxDuration = 300;
+export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
     try {
@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
             const { error } = await supabase
                 .from("repositories")
                 .update({
-                    status: "pending",
+                    status: "indexing",
                     file_count: 0,
                     total_files_discovered: 0,
                     total_files_processed: 0,
@@ -88,7 +88,7 @@ export async function POST(request: NextRequest) {
                     owner,
                     name,
                     full_name: fullName,
-                    status: "pending",
+                    status: "indexing",
                 })
                 .select()
                 .single();
@@ -99,18 +99,20 @@ export async function POST(request: NextRequest) {
             repositoryId = newRepo.id;
         }
 
-        await inngest.send({
-            name: "repo/index.requested",
-            data: {
-                owner,
-                name,
-                repositoryId,
-            },
+        indexRepository(owner, name, repositoryId).catch(async (err) => {
+            await supabase
+                .from("repositories")
+                .update({
+                    status: "failed",
+                    error_message: err instanceof Error ? err.message : "Indexing failed",
+                    updated_at: new Date().toISOString(),
+                })
+                .eq("id", repositoryId);
         });
 
         return NextResponse.json({
             repositoryId,
-            status: "pending",
+            status: "indexing",
             message: "Indexing started",
         });
     } catch (error) {

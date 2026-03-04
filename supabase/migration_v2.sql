@@ -41,9 +41,11 @@ WHERE a.ctid < b.ctid
 CREATE UNIQUE INDEX IF NOT EXISTS idx_repository_files_unique_chunk
     ON repository_files(repository_id, file_path, chunk_index);
 
+DROP FUNCTION IF EXISTS match_file_chunks(vector, uuid, float, int);
 DROP FUNCTION IF EXISTS match_file_chunks(vector, uuid, double precision, integer);
+DROP FUNCTION IF EXISTS match_file_chunks;
 
-CREATE OR REPLACE FUNCTION match_file_chunks(
+CREATE FUNCTION match_file_chunks(
     query_embedding vector(384),
     target_repository_id UUID,
     match_threshold FLOAT DEFAULT 0.3,
