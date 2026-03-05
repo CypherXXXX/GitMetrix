@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
             const { data: repo } = await supabase
                 .from("repositories")
                 .select("id, full_name")
-                .eq("owner", owner)
+                .ilike("owner", owner)
                 .eq("status", "completed")
                 .order("indexed_at", { ascending: false })
                 .limit(1)
