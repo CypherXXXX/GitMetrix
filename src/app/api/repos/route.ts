@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Octokit } from "octokit";
+import { supabase } from "@/lib/supabase";
 
 interface GitHubRepo {
     name: string;
@@ -16,10 +17,31 @@ interface GitHubRepo {
 export async function GET(request: NextRequest) {
     try {
         const username = request.nextUrl.searchParams.get("username");
+        const owner = request.nextUrl.searchParams.get("owner");
+
+        if (owner) {
+            const { data: repo } = await supabase
+                .from("repositories")
+                .select("id, full_name")
+                .eq("owner", owner)
+                .eq("status", "completed")
+                .order("indexed_at", { ascending: false })
+                .limit(1)
+                .single();
+
+            if (repo) {
+                return NextResponse.json({
+                    repositoryId: repo.id,
+                    fullName: repo.full_name,
+                });
+            }
+
+            return NextResponse.json({ repositoryId: null });
+        }
 
         if (!username) {
             return NextResponse.json(
-                { error: "username query parameter is required" },
+                { error: "username or owner query parameter is required" },
                 { status: 400 }
             );
         }

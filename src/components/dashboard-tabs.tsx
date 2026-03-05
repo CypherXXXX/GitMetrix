@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, lazy, Suspense } from "react";
+import { useState, useEffect, lazy, Suspense } from "react";
 import { motion } from "framer-motion";
 import { BarChart3, Shield, TrendingUp, Loader2 } from "lucide-react";
 import { DashboardContent } from "./dashboard-content";
@@ -25,11 +25,27 @@ const TABS: Array<{ id: TabType; label: string; icon: React.FC<{ className?: str
 interface DashboardTabsProps {
     data: DashboardData;
     username: string;
-    repositoryId?: string;
 }
 
-export function DashboardTabs({ data, username, repositoryId }: DashboardTabsProps) {
+export function DashboardTabs({ data, username }: DashboardTabsProps) {
     const [activeTab, setActiveTab] = useState<TabType>("overview");
+    const [repositoryId, setRepositoryId] = useState<string | null>(null);
+    const [repoLoading, setRepoLoading] = useState(true);
+
+    useEffect(() => {
+        async function fetchIndexedRepo() {
+            setRepoLoading(true);
+            try {
+                const response = await fetch(`/api/repos?owner=${username}`);
+                if (response.ok) {
+                    const result = await response.json();
+                    setRepositoryId(result.repositoryId || null);
+                }
+            } catch (_) { }
+            setRepoLoading(false);
+        }
+        fetchIndexedRepo();
+    }, [username]);
 
     return (
         <div className="space-y-6">
@@ -42,8 +58,8 @@ export function DashboardTabs({ data, username, repositoryId }: DashboardTabsPro
                             key={tab.id}
                             onClick={() => setActiveTab(tab.id)}
                             className={`relative flex items-center gap-1.5 whitespace-nowrap rounded-lg px-4 py-2 text-xs font-medium transition-all sm:text-sm ${isActive
-                                    ? "text-white"
-                                    : "text-zinc-500 hover:bg-white/3 hover:text-zinc-300"
+                                ? "text-white"
+                                : "text-zinc-500 hover:bg-white/3 hover:text-zinc-300"
                                 }`}
                         >
                             {isActive && (
@@ -70,7 +86,11 @@ export function DashboardTabs({ data, username, repositoryId }: DashboardTabsPro
                         </div>
                     }
                 >
-                    {repositoryId ? (
+                    {repoLoading ? (
+                        <div className="flex items-center justify-center py-20">
+                            <Loader2 className="h-6 w-6 animate-spin text-indigo-400" />
+                        </div>
+                    ) : repositoryId ? (
                         <CodeHealthTab repositoryId={repositoryId} />
                     ) : (
                         <div className="flex flex-col items-center justify-center gap-3 py-20">
