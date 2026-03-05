@@ -3,6 +3,7 @@ import { generateEmbeddings } from "@/lib/embeddings";
 import { parseFile } from "@/lib/parser";
 import { chunkFile } from "@/lib/chunker";
 import { buildDependencyGraph, serializeGraph } from "@/lib/dependency-graph";
+import { analyzeRepository } from "@/lib/static-analysis";
 import { redis } from "@/lib/redis";
 import { Octokit } from "octokit";
 import type { ParsedFile, CodeChunk, IngestionStats, RepoTreeFile } from "./types";
@@ -258,6 +259,11 @@ export async function indexRepository(
             .delete()
             .eq("repository_id", repositoryId);
 
+        await supabase
+            .from("code_metrics")
+            .delete()
+            .eq("repository_id", repositoryId);
+
         const { files } = await fetchRepoTree(owner, name);
         stats.totalFilesDiscovered = files.length;
 
@@ -410,6 +416,41 @@ export async function indexRepository(
             stats.errors.push(`Dependency graph error: ${err instanceof Error ? err.message : String(err)}`);
         }
 
+        let healthScore = 100;
+
+        try {
+            const report = analyzeRepository(allParsedFiles);
+            healthScore = report.healthScore;
+
+            if (report.fileMetrics.length > 0) {
+                const metricRows = report.fileMetrics.map((m) => ({
+                    repository_id: repositoryId,
+                    file_path: m.filePath,
+                    language: m.language,
+                    line_count: m.lineCount,
+                    function_count: m.functionCount,
+                    avg_function_length: m.avgFunctionLength,
+                    max_function_length: m.maxFunctionLength,
+                    max_cyclomatic_complexity: m.maxCyclomaticComplexity,
+                    max_nesting_depth: m.maxNestingDepth,
+                    import_count: m.importCount,
+                    export_count: m.exportCount,
+                    is_giant_file: m.isGiantFile,
+                    risk_score: m.riskScore,
+                }));
+
+                for (let k = 0; k < metricRows.length; k += DB_INSERT_BATCH_SIZE) {
+                    const batch = metricRows.slice(k, k + DB_INSERT_BATCH_SIZE);
+                    const { error } = await supabase.from("code_metrics").insert(batch);
+                    if (error) {
+                        stats.errors.push(`Code metrics insert error: ${error.message}`);
+                    }
+                }
+            }
+        } catch (err) {
+            stats.errors.push(`Static analysis error: ${err instanceof Error ? err.message : String(err)}`);
+        }
+
         stats.completedAt = Date.now();
         stats.totalFilesIndexed = new Set(allParsedFiles.map((f) => f.filePath)).size;
 
@@ -423,6 +464,7 @@ export async function indexRepository(
                 total_chunks: stats.totalChunksGenerated,
                 total_vectors: stats.totalVectorsStored,
                 languages_json: stats.languageBreakdown,
+                health_score: healthScore,
                 indexed_at: new Date().toISOString(),
                 updated_at: new Date().toISOString(),
             })

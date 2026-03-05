@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 import { routeComplete } from "@/lib/llm/llmRouter";
+import { analyzeRepository } from "@/lib/static-analysis";
+import type { ParsedFile } from "@/lib/types";
 
 export async function GET(request: NextRequest) {
     try {
@@ -33,115 +35,115 @@ export async function GET(request: NextRequest) {
             .eq("repository_id", repositoryId)
             .order("risk_score", { ascending: false });
 
-        if (!metrics || metrics.length === 0) {
-            const { data: files } = await supabase
-                .from("repository_files")
-                .select("file_path, content, language, symbol_name, symbol_type, start_line, end_line")
-                .eq("repository_id", repositoryId)
-                .limit(200);
-
-            if (!files || files.length === 0) {
-                return NextResponse.json({
-                    healthScore: 100,
-                    totalFiles: 0,
-                    topRisks: [],
-                    summary: { giantFiles: 0, highComplexity: 0, deepNesting: 0, avgRiskScore: 0 },
-                    recommendations: [],
-                });
-            }
-
-            const fileMetrics = new Map<string, {
-                lineCount: number;
-                functionCount: number;
-                maxFunctionLength: number;
-                importCount: number;
-            }>();
-
-            for (const file of files) {
-                const existing = fileMetrics.get(file.file_path);
-                const lines = file.content.split("\n").length;
-                const funcLength = file.start_line && file.end_line
-                    ? file.end_line - file.start_line + 1
-                    : 0;
-                const isFunc = file.symbol_type === "function" || file.symbol_type === "method";
-
-                if (existing) {
-                    existing.lineCount = Math.max(existing.lineCount, lines);
-                    if (isFunc) existing.functionCount++;
-                    existing.maxFunctionLength = Math.max(existing.maxFunctionLength, funcLength);
-                } else {
-                    fileMetrics.set(file.file_path, {
-                        lineCount: lines,
-                        functionCount: isFunc ? 1 : 0,
-                        maxFunctionLength: funcLength,
-                        importCount: 0,
-                    });
-                }
-            }
-
-            const topRisks = Array.from(fileMetrics.entries())
-                .map(([filePath, m]) => {
-                    let risk = 0;
-                    if (m.lineCount > 500) risk += 20;
-                    if (m.maxFunctionLength > 100) risk += 15;
-                    if (m.functionCount > 20) risk += 10;
-                    return {
-                        filePath,
-                        lineCount: m.lineCount,
-                        functionCount: m.functionCount,
-                        maxFunctionLength: m.maxFunctionLength,
-                        riskScore: Math.min(100, risk),
-                    };
-                })
-                .sort((a, b) => b.riskScore - a.riskScore)
-                .slice(0, 10);
-
-            const avgRisk = topRisks.length > 0
-                ? Math.round(topRisks.reduce((a, b) => a + b.riskScore, 0) / topRisks.length)
-                : 0;
+        if (metrics && metrics.length > 0) {
+            const topRisks = metrics.slice(0, 10);
+            const totalFiles = metrics.length;
+            const avgRisk = Math.round(
+                metrics.reduce(
+                    (a: number, b: { risk_score: number }) => a + (b.risk_score || 0),
+                    0
+                ) / totalFiles
+            );
 
             return NextResponse.json({
-                healthScore: Math.max(0, 100 - avgRisk),
-                totalFiles: fileMetrics.size,
-                topRisks,
+                healthScore: repository.health_score || Math.max(0, 100 - avgRisk),
+                totalFiles,
+                topRisks: topRisks.map((m: Record<string, unknown>) => ({
+                    filePath: m.file_path,
+                    lineCount: m.line_count,
+                    functionCount: m.function_count,
+                    maxFunctionLength: m.max_function_length,
+                    maxCyclomaticComplexity: m.max_cyclomatic_complexity,
+                    maxNestingDepth: m.max_nesting_depth,
+                    riskScore: m.risk_score,
+                    isGiantFile: m.is_giant_file,
+                })),
                 summary: {
-                    giantFiles: Array.from(fileMetrics.values()).filter((m) => m.lineCount > 500).length,
-                    highComplexity: 0,
-                    deepNesting: 0,
+                    giantFiles: metrics.filter((m: { is_giant_file: boolean }) => m.is_giant_file).length,
+                    highComplexity: metrics.filter((m: { max_cyclomatic_complexity: number }) => (m.max_cyclomatic_complexity || 0) > 10).length,
+                    deepNesting: metrics.filter((m: { max_nesting_depth: number }) => (m.max_nesting_depth || 0) > 5).length,
                     avgRiskScore: avgRisk,
                 },
                 recommendations: [],
             });
         }
 
-        const topRisks = metrics.slice(0, 10);
-        const totalFiles = metrics.length;
-        const avgRisk = Math.round(
-            metrics.reduce(
-                (a: number, b: { risk_score: number }) => a + (b.risk_score || 0),
-                0
-            ) / totalFiles
-        );
+        const { data: files } = await supabase
+            .from("repository_files")
+            .select("file_path, content, language, symbol_name, symbol_type, start_line, end_line")
+            .eq("repository_id", repositoryId);
+
+        if (!files || files.length === 0) {
+            return NextResponse.json({
+                healthScore: repository.health_score || 100,
+                totalFiles: 0,
+                topRisks: [],
+                summary: { giantFiles: 0, highComplexity: 0, deepNesting: 0, avgRiskScore: 0 },
+                recommendations: [],
+            });
+        }
+
+        const fileMap = new Map<string, ParsedFile>();
+
+        for (const row of files) {
+            const existing = fileMap.get(row.file_path);
+            if (existing) {
+                existing.content += "\n" + row.content;
+                existing.lineCount = existing.content.split("\n").length;
+                if (row.symbol_name && row.symbol_type) {
+                    existing.symbols.push({
+                        name: row.symbol_name,
+                        type: row.symbol_type,
+                        startLine: row.start_line || 0,
+                        endLine: row.end_line || 0,
+                        language: row.language || "unknown",
+                        parentSymbol: null,
+                        content: row.content,
+                    });
+                }
+            } else {
+                const symbols = [];
+                if (row.symbol_name && row.symbol_type) {
+                    symbols.push({
+                        name: row.symbol_name,
+                        type: row.symbol_type,
+                        startLine: row.start_line || 0,
+                        endLine: row.end_line || 0,
+                        language: row.language || "unknown",
+                        parentSymbol: null,
+                        content: row.content,
+                    });
+                }
+                fileMap.set(row.file_path, {
+                    filePath: row.file_path,
+                    language: row.language || "unknown",
+                    content: row.content,
+                    symbols,
+                    imports: [],
+                    exports: [],
+                    fileSize: row.content.length,
+                    lineCount: row.content.split("\n").length,
+                });
+            }
+        }
+
+        const parsedFiles = Array.from(fileMap.values());
+        const report = analyzeRepository(parsedFiles);
 
         return NextResponse.json({
-            healthScore: repository.health_score || Math.max(0, 100 - avgRisk),
-            totalFiles,
-            topRisks: topRisks.map((m: Record<string, unknown>) => ({
-                filePath: m.file_path,
-                lineCount: m.line_count,
-                functionCount: m.function_count,
-                maxFunctionLength: m.max_function_length,
-                maxCyclomaticComplexity: m.max_cyclomatic_complexity,
-                maxNestingDepth: m.max_nesting_depth,
-                riskScore: m.risk_score,
-                isGiantFile: m.is_giant_file,
+            healthScore: repository.health_score || report.healthScore,
+            totalFiles: report.totalFiles,
+            topRisks: report.topRisks.map((m) => ({
+                filePath: m.filePath,
+                lineCount: m.lineCount,
+                functionCount: m.functionCount,
+                maxFunctionLength: m.maxFunctionLength,
+                maxCyclomaticComplexity: m.maxCyclomaticComplexity,
+                maxNestingDepth: m.maxNestingDepth,
+                riskScore: m.riskScore,
+                isGiantFile: m.isGiantFile,
             })),
-            summary: {
-                giantFiles: metrics.filter((m: { is_giant_file: boolean }) => m.is_giant_file).length,
-                highComplexity: metrics.filter((m: { max_cyclomatic_complexity: number }) => (m.max_cyclomatic_complexity || 0) > 10).length,
-                deepNesting: metrics.filter((m: { max_nesting_depth: number }) => (m.max_nesting_depth || 0) > 5).length,
-                avgRiskScore: avgRisk,
-            },
+            summary: report.summary,
             recommendations: [],
         });
     } catch (error) {
