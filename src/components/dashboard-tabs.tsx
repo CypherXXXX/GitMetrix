@@ -30,6 +30,7 @@ interface DashboardTabsProps {
 export function DashboardTabs({ data, username }: DashboardTabsProps) {
     const [activeTab, setActiveTab] = useState<TabType>("overview");
     const [repositoryId, setRepositoryId] = useState<string | null>(null);
+    const [repoName, setRepoName] = useState<string | null>(null);
     const [repoLoading, setRepoLoading] = useState(true);
 
     useEffect(() => {
@@ -40,6 +41,7 @@ export function DashboardTabs({ data, username }: DashboardTabsProps) {
                 if (response.ok) {
                     const result = await response.json();
                     setRepositoryId(result.repositoryId || null);
+                    setRepoName(result.fullName || null);
                 }
             } catch (_) { }
             setRepoLoading(false);
@@ -91,7 +93,7 @@ export function DashboardTabs({ data, username }: DashboardTabsProps) {
                             <Loader2 className="h-6 w-6 animate-spin text-indigo-400" />
                         </div>
                     ) : repositoryId ? (
-                        <CodeHealthTab repositoryId={repositoryId} />
+                        <CodeHealthTab repositoryId={repositoryId} repositoryName={repoName || undefined} />
                     ) : (
                         <div className="flex flex-col items-center justify-center gap-3 py-20">
                             <Shield className="h-8 w-8 text-zinc-600" />

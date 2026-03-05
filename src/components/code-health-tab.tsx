@@ -11,6 +11,7 @@ import {
     Loader2,
     Lightbulb,
     BarChart3,
+    GitBranch,
 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 
@@ -38,42 +39,12 @@ interface HealthData {
     recommendations: string[];
 }
 
-function HealthGauge({ score }: { score: number }) {
-    const circumference = 2 * Math.PI * 45;
-    const offset = circumference - (score / 100) * circumference;
-    const color = score >= 80 ? "#10B981" : score >= 60 ? "#F59E0B" : "#EF4444";
-    const label = score >= 80 ? "Healthy" : score >= 60 ? "Fair" : "At Risk";
-
-    return (
-        <Card className="flex flex-col items-center justify-center p-6" glowColor={`${color}33`}>
-            <div className="mb-2 flex items-center gap-2">
-                <Shield className="h-4 w-4" style={{ color }} />
-                <span className="text-sm font-medium text-zinc-400">Code Health</span>
-            </div>
-            <div className="relative h-32 w-32">
-                <svg className="h-full w-full -rotate-90" viewBox="0 0 100 100">
-                    <circle cx="50" cy="50" r="45" fill="none" stroke="#27272A" strokeWidth="5" />
-                    <circle
-                        cx="50" cy="50" r="45" fill="none"
-                        stroke={color} strokeWidth="5" strokeLinecap="round"
-                        strokeDasharray={circumference} strokeDashoffset={offset}
-                        className="transition-all duration-1000 ease-out"
-                    />
-                </svg>
-                <div className="absolute inset-0 flex flex-col items-center justify-center">
-                    <span className="font-mono text-3xl font-bold text-white">{score}</span>
-                    <span className="text-[10px]" style={{ color }}>{label}</span>
-                </div>
-            </div>
-        </Card>
-    );
-}
-
 interface CodeHealthTabProps {
     repositoryId: string;
+    repositoryName?: string;
 }
 
-export function CodeHealthTab({ repositoryId }: CodeHealthTabProps) {
+export function CodeHealthTab({ repositoryId, repositoryName }: CodeHealthTabProps) {
     const [data, setData] = useState<HealthData | null>(null);
     const [loading, setLoading] = useState(true);
     const [recommendations, setRecommendations] = useState<string[]>([]);
@@ -130,51 +101,102 @@ export function CodeHealthTab({ repositoryId }: CodeHealthTabProps) {
         );
     }
 
+    const healthColor = data.healthScore >= 80 ? "#10B981" : data.healthScore >= 60 ? "#F59E0B" : "#EF4444";
+    const healthLabel = data.healthScore >= 80 ? "Healthy" : data.healthScore >= 60 ? "Fair" : "At Risk";
+    const circumference = 2 * Math.PI * 45;
+    const offset = circumference - (data.healthScore / 100) * circumference;
+
     return (
         <motion.div
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             className="space-y-5"
         >
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-4">
-                <HealthGauge score={data.healthScore} />
+            {repositoryName && (
+                <div className="flex items-center gap-2.5 rounded-xl border border-indigo-500/15 bg-indigo-500/5 px-4 py-2.5">
+                    <GitBranch className="h-4 w-4 text-indigo-400" />
+                    <span className="text-sm font-medium text-zinc-300">
+                        Analyzing
+                    </span>
+                    <span className="font-mono text-sm font-semibold text-indigo-300">
+                        {repositoryName}
+                    </span>
+                </div>
+            )}
 
-                <Card className="p-4" glowColor="rgba(99, 102, 241, 0.15)">
-                    <div className="mb-3 flex items-center gap-2">
+            <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+                <Card className="flex flex-col p-5" glowColor={`${healthColor}33`}>
+                    <div className="mb-4 flex items-center gap-2">
+                        <Shield className="h-4 w-4" style={{ color: healthColor }} />
+                        <span className="text-xs font-medium text-zinc-400">Code Health</span>
+                    </div>
+                    <div className="flex flex-1 items-center justify-center">
+                        <div className="relative h-24 w-24">
+                            <svg className="h-full w-full -rotate-90" viewBox="0 0 100 100">
+                                <circle cx="50" cy="50" r="45" fill="none" stroke="#27272A" strokeWidth="5" />
+                                <circle
+                                    cx="50" cy="50" r="45" fill="none"
+                                    stroke={healthColor} strokeWidth="5" strokeLinecap="round"
+                                    strokeDasharray={circumference} strokeDashoffset={offset}
+                                    className="transition-all duration-1000 ease-out"
+                                />
+                            </svg>
+                            <div className="absolute inset-0 flex flex-col items-center justify-center">
+                                <span className="font-mono text-2xl font-bold text-white">{data.healthScore}</span>
+                                <span className="text-[9px] font-medium" style={{ color: healthColor }}>{healthLabel}</span>
+                            </div>
+                        </div>
+                    </div>
+                </Card>
+
+                <Card className="flex flex-col p-5" glowColor="rgba(99, 102, 241, 0.15)">
+                    <div className="mb-4 flex items-center gap-2">
                         <Layers className="h-4 w-4 text-indigo-400" />
                         <span className="text-xs font-medium text-zinc-400">Files Analyzed</span>
                     </div>
-                    <span className="font-mono text-3xl font-bold text-white">{data.totalFiles}</span>
+                    <div className="flex flex-1 items-end">
+                        <div>
+                            <span className="font-mono text-4xl font-bold text-white">{data.totalFiles}</span>
+                            <p className="mt-1.5 text-[11px] text-zinc-600">source files scanned</p>
+                        </div>
+                    </div>
                 </Card>
 
-                <Card className="p-4" glowColor="rgba(245, 158, 11, 0.15)">
-                    <div className="mb-3 flex items-center gap-2">
+                <Card className="flex flex-col p-5" glowColor="rgba(245, 158, 11, 0.15)">
+                    <div className="mb-4 flex items-center gap-2">
                         <AlertTriangle className="h-4 w-4 text-amber-400" />
                         <span className="text-xs font-medium text-zinc-400">Issues Found</span>
                     </div>
-                    <div className="space-y-1.5">
-                        <div className="flex items-center justify-between text-xs">
-                            <span className="text-zinc-500">Giant Files</span>
-                            <span className="font-mono font-semibold text-amber-400">{data.summary.giantFiles}</span>
+                    <div className="flex flex-1 flex-col justify-end space-y-2">
+                        <div className="flex items-center justify-between">
+                            <span className="text-xs text-zinc-500">Giant Files</span>
+                            <span className="rounded-md bg-amber-500/10 px-1.5 py-0.5 font-mono text-xs font-semibold text-amber-400">{data.summary.giantFiles}</span>
                         </div>
-                        <div className="flex items-center justify-between text-xs">
-                            <span className="text-zinc-500">High Complexity</span>
-                            <span className="font-mono font-semibold text-red-400">{data.summary.highComplexity}</span>
+                        <div className="flex items-center justify-between">
+                            <span className="text-xs text-zinc-500">High Complexity</span>
+                            <span className="rounded-md bg-red-500/10 px-1.5 py-0.5 font-mono text-xs font-semibold text-red-400">{data.summary.highComplexity}</span>
                         </div>
-                        <div className="flex items-center justify-between text-xs">
-                            <span className="text-zinc-500">Deep Nesting</span>
-                            <span className="font-mono font-semibold text-purple-400">{data.summary.deepNesting}</span>
+                        <div className="flex items-center justify-between">
+                            <span className="text-xs text-zinc-500">Deep Nesting</span>
+                            <span className="rounded-md bg-purple-500/10 px-1.5 py-0.5 font-mono text-xs font-semibold text-purple-400">{data.summary.deepNesting}</span>
                         </div>
                     </div>
                 </Card>
 
-                <Card className="p-4" glowColor="rgba(168, 85, 247, 0.15)">
-                    <div className="mb-3 flex items-center gap-2">
+                <Card className="flex flex-col p-5" glowColor="rgba(168, 85, 247, 0.15)">
+                    <div className="mb-4 flex items-center gap-2">
                         <Activity className="h-4 w-4 text-purple-400" />
                         <span className="text-xs font-medium text-zinc-400">Avg Risk Score</span>
                     </div>
-                    <span className="font-mono text-3xl font-bold text-white">{data.summary.avgRiskScore}</span>
-                    <span className="ml-1 text-xs text-zinc-500">/ 100</span>
+                    <div className="flex flex-1 items-end">
+                        <div>
+                            <div className="flex items-baseline gap-1">
+                                <span className="font-mono text-4xl font-bold text-white">{data.summary.avgRiskScore}</span>
+                                <span className="text-sm text-zinc-600">/ 100</span>
+                            </div>
+                            <p className="mt-1.5 text-[11px] text-zinc-600">across all files</p>
+                        </div>
+                    </div>
                 </Card>
             </div>
 
@@ -190,10 +212,10 @@ export function CodeHealthTab({ repositoryId }: CodeHealthTabProps) {
                                 key={idx}
                                 className="flex items-center justify-between rounded-xl border border-white/5 bg-white/2 px-3 py-2.5 sm:px-4"
                             >
-                                <div className="flex items-center gap-3">
-                                    <FileCode2 className="h-3.5 w-3.5 text-zinc-500" />
-                                    <div>
-                                        <span className="text-xs font-medium text-zinc-200 sm:text-sm">
+                                <div className="flex items-center gap-3 overflow-hidden">
+                                    <FileCode2 className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
+                                    <div className="min-w-0">
+                                        <span className="block truncate text-xs font-medium text-zinc-200 sm:text-sm">
                                             {file.filePath.split("/").pop()}
                                         </span>
                                         <div className="flex gap-2 text-[10px] text-zinc-600">
@@ -202,8 +224,8 @@ export function CodeHealthTab({ repositoryId }: CodeHealthTabProps) {
                                         </div>
                                     </div>
                                 </div>
-                                <div className="flex items-center gap-3">
-                                    <div className="h-1.5 w-16 overflow-hidden rounded-full bg-white/5 sm:w-24">
+                                <div className="flex shrink-0 items-center gap-3">
+                                    <div className="hidden h-1.5 w-16 overflow-hidden rounded-full bg-white/5 sm:block sm:w-24">
                                         <div
                                             className="h-full rounded-full transition-all"
                                             style={{
