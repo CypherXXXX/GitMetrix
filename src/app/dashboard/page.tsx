@@ -2,10 +2,10 @@ import { currentUser } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { fetchGitHubData } from "@/lib/github";
 import { DashboardHeader } from "@/components/dashboard-header";
-import { DashboardContent } from "@/components/dashboard-content";
+import { DashboardTabs } from "@/components/dashboard-tabs";
 import { UsernameSearch } from "@/components/username-search";
 import { AnimatedBackground } from "@/components/animated-background";
-import { AlertTriangle, Github, Search } from "lucide-react";
+import { AlertTriangle, Search } from "lucide-react";
 import { Suspense } from "react";
 import { DashboardSkeleton } from "@/components/ui/skeleton";
 
@@ -49,7 +49,7 @@ function ErrorState({ message }: { message: string }) {
 async function DashboardData({ username }: { username: string }) {
     try {
         const data = await fetchGitHubData(username);
-        return <DashboardContent data={data} />;
+        return <DashboardTabs data={data} username={username} />;
     } catch (error) {
         const message =
             error instanceof Error ? error.message : "Failed to fetch GitHub data";

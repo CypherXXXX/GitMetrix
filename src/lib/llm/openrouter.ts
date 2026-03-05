@@ -1,9 +1,10 @@
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
-const MODEL = "qwen/qwen2.5-7b-instruct:free";
+const DEFAULT_MODEL = "qwen/qwen2.5-7b-instruct:free";
+const DEEPSEEK_MODEL = "deepseek/deepseek-chat:free";
 
 async function callOpenRouter(
     messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
-    options?: { temperature?: number; max_tokens?: number; stream?: boolean }
+    options?: { temperature?: number; max_tokens?: number; stream?: boolean; model?: string }
 ): Promise<Response> {
     const apiKey = process.env.OPENROUTER_API_KEY;
     if (!apiKey) throw new Error("OPENROUTER_API_KEY not configured");
@@ -17,7 +18,7 @@ async function callOpenRouter(
             "X-Title": "GitMetrix",
         },
         body: JSON.stringify({
-            model: MODEL,
+            model: options?.model || DEFAULT_MODEL,
             messages,
             temperature: options?.temperature ?? 0.2,
             max_tokens: options?.max_tokens ?? 4096,
@@ -33,23 +34,9 @@ async function callOpenRouter(
     return response;
 }
 
-export async function openrouterComplete(
-    messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
-    options?: { temperature?: number; max_tokens?: number }
-): Promise<string> {
-    const response = await callOpenRouter(messages, { ...options, stream: false });
-    const data = await response.json();
-    return data.choices?.[0]?.message?.content || "";
-}
-
-export async function openrouterStream(
-    messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
-    options?: { temperature?: number; max_tokens?: number }
-): Promise<AsyncIterable<{ content: string | null }>> {
-    const response = await callOpenRouter(messages, { ...options, stream: true });
-    const reader = response.body?.getReader();
-    if (!reader) throw new Error("OpenRouter: no response body");
-
+function parseSSEStream(
+    reader: ReadableStreamDefaultReader<Uint8Array>
+): AsyncIterable<{ content: string | null }> {
     const decoder = new TextDecoder();
 
     return {
@@ -75,6 +62,39 @@ export async function openrouterStream(
             }
         },
     };
+}
+
+export async function openrouterComplete(
+    messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
+    options?: { temperature?: number; max_tokens?: number; model?: string }
+): Promise<string> {
+    const response = await callOpenRouter(messages, { ...options, stream: false });
+    const data = await response.json();
+    return data.choices?.[0]?.message?.content || "";
+}
+
+export async function openrouterStream(
+    messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
+    options?: { temperature?: number; max_tokens?: number; model?: string }
+): Promise<AsyncIterable<{ content: string | null }>> {
+    const response = await callOpenRouter(messages, { ...options, stream: true });
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error("OpenRouter: no response body");
+    return parseSSEStream(reader);
+}
+
+export async function deepseekViaOpenrouterComplete(
+    messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
+    options?: { temperature?: number; max_tokens?: number }
+): Promise<string> {
+    return openrouterComplete(messages, { ...options, model: DEEPSEEK_MODEL });
+}
+
+export async function deepseekViaOpenrouterStream(
+    messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
+    options?: { temperature?: number; max_tokens?: number }
+): Promise<AsyncIterable<{ content: string | null }>> {
+    return openrouterStream(messages, { ...options, model: DEEPSEEK_MODEL });
 }
 
 export function isOpenRouterAvailable(): boolean {

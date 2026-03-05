@@ -1,7 +1,8 @@
 import { NextRequest } from "next/server";
 import { supabase } from "@/lib/supabase";
 import { generateEmbedding } from "@/lib/embeddings";
-import { llmComplete, llmStream } from "@/lib/llm/llmRouter";
+import { routeComplete, routeStream } from "@/lib/llm/llmRouter";
+import { cohereRerank, isCohereAvailable } from "@/lib/llm/cohere";
 import { ChatMessageSchema } from "@/lib/validators";
 
 const SYSTEM_PROMPT = `You are GitMetrix AI, a senior software engineer and expert code analyst embedded in a developer tool. Your job is to deeply analyze GitHub repository codebases and provide precise, insightful answers.
@@ -63,7 +64,8 @@ function boostSimilarity(match: MatchResult): number {
 
 async function generateQueryVariations(query: string): Promise<string[]> {
     try {
-        const { text } = await llmComplete(
+        const { text } = await routeComplete(
+            "query_expansion",
             [
                 {
                     role: "system",
@@ -191,6 +193,76 @@ async function fetchNeighborChunks(
     return neighbors;
 }
 
+async function rerankResults(
+    query: string,
+    matches: MatchResult[]
+): Promise<MatchResult[]> {
+    if (!isCohereAvailable() || matches.length === 0) {
+        return matches
+            .map((m) => ({ ...m, similarity: boostSimilarity(m) }))
+            .sort((a, b) => b.similarity - a.similarity)
+            .slice(0, 12);
+    }
+
+    try {
+        const documents = matches.map((m) => {
+            const symbolInfo = m.symbol_name ? `[${m.symbol_type}: ${m.symbol_name}]` : "";
+            return `${m.file_path} ${symbolInfo}\n${m.content}`;
+        });
+
+        const reranked = await cohereRerank(query, documents, 12);
+
+        return reranked
+            .map((r) => ({
+                ...matches[r.index],
+                similarity: r.relevanceScore,
+            }))
+            .sort((a, b) => b.similarity - a.similarity);
+    } catch (_) {
+        return matches
+            .map((m) => ({ ...m, similarity: boostSimilarity(m) }))
+            .sort((a, b) => b.similarity - a.similarity)
+            .slice(0, 12);
+    }
+}
+
+function detectQueryType(message: string): boolean {
+    const architectureKeywords = [
+        "architecture", "flow", "how does", "how do", "system design",
+        "data flow", "pipeline", "authentication", "auth flow",
+        "request flow", "lifecycle", "how is", "trace"
+    ];
+    const lower = message.toLowerCase();
+    return architectureKeywords.some((kw) => lower.includes(kw));
+}
+
+async function fetchDependencyContext(
+    repositoryId: string,
+    filePaths: string[]
+): Promise<string> {
+    const { data: depEdges } = await supabase
+        .from("dependency_edges")
+        .select("source_path, target_path, edge_type, specifiers")
+        .eq("repository_id", repositoryId)
+        .limit(100);
+
+    if (!depEdges || depEdges.length === 0) return "";
+
+    const relevantPaths = new Set(filePaths);
+    const relevantEdges = depEdges.filter(
+        (e: { source_path: string; target_path: string }) =>
+            relevantPaths.has(e.source_path) || relevantPaths.has(e.target_path)
+    );
+
+    if (relevantEdges.length === 0) return "";
+
+    return "\n\nDependency relationships between files in context:\n" +
+        relevantEdges
+            .map((e: { source_path: string; target_path: string; edge_type: string }) =>
+                `${e.source_path} --[${e.edge_type}]--> ${e.target_path}`)
+            .join("\n");
+}
+
 export async function POST(request: NextRequest) {
     try {
         const body = await request.json();
@@ -241,12 +313,9 @@ export async function POST(request: NextRequest) {
         const neighborChunks = await fetchNeighborChunks(mergedMatches, repositoryId);
         const allMatches = [...mergedMatches, ...neighborChunks];
 
-        const boostedMatches = allMatches
-            .map((m) => ({ ...m, similarity: boostSimilarity(m) }))
-            .sort((a, b) => b.similarity - a.similarity)
-            .slice(0, 15);
+        const rankedMatches = await rerankResults(message, allMatches);
 
-        const fileReferences = boostedMatches.map((match) => ({
+        const fileReferences = rankedMatches.map((match) => ({
             filePath: match.file_path,
             chunkContent: match.content.slice(0, 200),
             similarityScore: Math.round(match.similarity * 100) / 100,
@@ -254,7 +323,7 @@ export async function POST(request: NextRequest) {
             symbolType: match.symbol_type,
         }));
 
-        const contextBlock = boostedMatches
+        const contextBlock = rankedMatches
             .map((match, i) => {
                 const symbolInfo = match.symbol_name
                     ? `[${match.symbol_type}: ${match.symbol_name}]`
@@ -266,31 +335,22 @@ export async function POST(request: NextRequest) {
             })
             .join("\n\n");
 
-        const { data: depEdges } = await supabase
-            .from("dependency_edges")
-            .select("source_path, target_path, edge_type")
-            .eq("repository_id", repositoryId)
-            .limit(50);
+        const depInfo = await fetchDependencyContext(
+            repositoryId,
+            rankedMatches.map((m) => m.file_path)
+        );
 
-        let depInfo = "";
-        if (depEdges && depEdges.length > 0) {
-            const relevantPaths = new Set(boostedMatches.map((m) => m.file_path));
-            const relevantEdges = depEdges.filter(
-                (e: { source_path: string; target_path: string }) =>
-                    relevantPaths.has(e.source_path) || relevantPaths.has(e.target_path)
-            );
-            if (relevantEdges.length > 0) {
-                depInfo = "\n\nDependency relationships between files in context:\n" +
-                    relevantEdges
-                        .map((e: { source_path: string; target_path: string; edge_type: string }) =>
-                            `${e.source_path} --[${e.edge_type}]--> ${e.target_path}`)
-                        .join("\n");
-            }
+        const isArchitectureQuery = detectQueryType(message);
+
+        let contextMessage: string;
+        if (contextBlock) {
+            const archHint = isArchitectureQuery
+                ? "\n\nThis appears to be an architecture/flow question. Pay special attention to the dependency relationships and trace the code flow step by step through multiple files."
+                : "";
+            contextMessage = `Here is the relevant code context from the repository "${repository.full_name}". Analyze every line carefully:\n\n${contextBlock}${depInfo}${archHint}`;
+        } else {
+            contextMessage = `No relevant code context was found in the repository "${repository.full_name}" for this query. Let the user know and suggest they ask about specific files or features.`;
         }
-
-        const contextMessage = contextBlock
-            ? `Here is the relevant code context from the repository "${repository.full_name}". Analyze every line carefully:\n\n${contextBlock}${depInfo}`
-            : `No relevant code context was found in the repository "${repository.full_name}" for this query. Let the user know and suggest they ask about specific files or features.`;
 
         const filteredHistory = (history || []).filter(
             (msg) => msg.content !== message
@@ -310,7 +370,7 @@ export async function POST(request: NextRequest) {
 
         messages.push({ role: "user", content: message });
 
-        const { stream } = await llmStream(messages, { temperature: 0.2, max_tokens: 4096 });
+        const { stream } = await routeStream("chat_stream", messages, { temperature: 0.2, max_tokens: 4096 });
 
         const encoder = new TextEncoder();
         const readableStream = new ReadableStream({

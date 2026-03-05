@@ -99,19 +99,21 @@ function VelocityScore({ score }: { score: number }) {
 function ActiveStreak({ streak }: { streak: number }) {
     return (
         <Card
-            className="flex h-full flex-col items-center justify-center"
+            className="flex h-full flex-col justify-center"
             glowColor="rgba(251, 146, 60, 0.2)"
         >
-            <div className="mb-3 flex items-center gap-2">
+            <div className="mb-4 flex items-center gap-2">
                 <Flame className="h-4 w-4 text-orange-400" />
                 <span className="text-sm font-medium text-zinc-400">
                     Active Streak
                 </span>
             </div>
-            <span className="font-mono text-5xl font-bold text-gradient-primary">
-                {streak}
-            </span>
-            <span className="mt-2 text-sm text-zinc-500">consecutive days</span>
+            <div className="flex items-baseline gap-2">
+                <span className="font-mono text-5xl font-bold text-gradient-primary">
+                    {streak}
+                </span>
+            </div>
+            <p className="mt-3 text-sm text-zinc-500">consecutive days</p>
         </Card>
     );
 }

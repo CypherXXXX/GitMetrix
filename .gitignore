@@ -42,8 +42,24 @@ next-env.d.ts
 # IDE
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
 
 # AI tooling
 .gemini/
 .agent/
 .agents/
+SKILL.md
+
+# Supabase
+.supabase/
+
+# package managers
+.yarn/
+.pnpm-store/
